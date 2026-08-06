@@ -166,6 +166,7 @@ mod tests {
     use super::*;
     use ght_core::{db, store as core_store};
     use serde_json::json;
+    use serial_test::serial;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -234,6 +235,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn collect_once_writes_all_boards_and_is_idempotent() {
         let server = MockServer::start().await;
         mount_all(&server).await;
@@ -260,6 +262,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn missing_token_skips_watch_board_but_keeps_others() {
         let server = MockServer::start().await;
         mount_all(&server).await;
