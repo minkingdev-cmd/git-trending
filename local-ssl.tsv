@@ -1,0 +1,3 @@
+# GH Trending 本地 HTTPS 模拟路由（local-ssl skill 维护；4 列 Tab 分隔）
+# axum :8000 同源服务 /api/* 与前端静态产物（frontend/dist）
+ghtrending.lfun.pub	/	http	127.0.0.1:8000
