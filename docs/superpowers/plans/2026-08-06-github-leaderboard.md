@@ -70,7 +70,7 @@ gh-trending/
 - Produces: `ght_core::config::{Settings, ConfigError, parse_languages, validate_collect_time}`、`ght_core::db::pg_pool(database_url: &str) -> Result<PgPool, sqlx::Error>`
 - `Settings` 字段：`database_url: String, jwt_secret: String, github_token: Option<String>, languages: Vec<String>, collect_time: String, cookie_secure: bool`
 
-- [ ] **Step 1: 创建 workspace 与四个 crate 骨架**
+- [x] **Step 1: 创建 workspace 与四个 crate 骨架**
 
 `backend/Cargo.toml`：
 
@@ -124,7 +124,7 @@ tokio = { workspace = true }
 
 collector/api/admin 的 Cargo.toml 同上格式（包名 `ght-collector`/`ght-api`/`ght-admin`），依赖先只写各自最小集：collector 与 api 加 `tokio、anyhow、tracing、tracing-subscriber、sqlx、chrono、serde`，api 另加 `axum、tower、tower-http、http、serde_json`，admin 加 `clap、tokio、anyhow`。全部依赖统一用 `{ workspace = true }`。占位 `src/main.rs` 内容为 `fn main() {}`（api 额外建空 `src/lib.rs`）。
 
-- [ ] **Step 2: 写失败测试（config 解析）**
+- [x] **Step 2: 写失败测试（config 解析）**
 
 `backend/crates/core/src/lib.rs`：
 
@@ -175,12 +175,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 3: 运行测试确认失败**
+- [x] **Step 3: 运行测试确认失败**
 
 Run: `cd backend && cargo test -p ght-core`
 Expected: 编译失败，`Settings`/`parse_languages` 等未定义。
 
-- [ ] **Step 4: 实现 config.rs 与 db.rs**
+- [x] **Step 4: 实现 config.rs 与 db.rs**
 
 `config.rs` 测试模块之前补上：
 
@@ -261,12 +261,12 @@ pub async fn pg_pool(database_url: &str) -> Result<PgPool, sqlx::Error> {
 }
 ```
 
-- [ ] **Step 5: 运行测试确认通过**
+- [x] **Step 5: 运行测试确认通过**
 
 Run: `cd backend && cargo test -p ght-core`
 Expected: 4 个测试 PASS。
 
-- [ ] **Step 6: 写基础设施文件**
+- [x] **Step 6: 写基础设施文件**
 
 `docker-compose.yml`：
 
@@ -342,12 +342,12 @@ COLLECT_TIME=09:00
 COOKIE_SECURE=false
 ```
 
-- [ ] **Step 7: 验证 workspace 整体编译 + 数据库就绪**
+- [x] **Step 7: 验证 workspace 整体编译 + 数据库就绪**
 
 Run: `make db && cd backend && cargo build`
 Expected: 编译成功；`docker compose ps` 显示 postgres healthy。
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add -A && git commit -m "feat: scaffold cargo workspace, settings, db pool, compose/make infra"
@@ -376,7 +376,7 @@ git add -A && git commit -m "feat: scaffold cargo workspace, settings, db pool, 
   - `store::cleanup_expired_refresh_tokens(pool) -> Result<u64>`
   - `store::board_count(pool, NaiveDate, Board) -> Result<i64>`
 
-- [ ] **Step 1: 写迁移文件（无外键）**
+- [x] **Step 1: 写迁移文件（无外键）**
 
 `backend/migrations/0001_init.sql`：
 
@@ -434,7 +434,7 @@ CREATE TABLE refresh_tokens (
 CREATE INDEX idx_refresh_tokens_user ON refresh_tokens (user_id);
 ```
 
-- [ ] **Step 2: db.rs 增加 migrate + lib.rs 挂模块**
+- [x] **Step 2: db.rs 增加 migrate + lib.rs 挂模块**
 
 `db.rs` 追加：
 
@@ -455,7 +455,7 @@ pub mod models;
 pub mod store;
 ```
 
-- [ ] **Step 3: 写 models.rs**
+- [x] **Step 3: 写 models.rs**
 
 ```rust
 use chrono::NaiveDate;
@@ -511,7 +511,7 @@ pub struct LeaderboardRow {
 }
 ```
 
-- [ ] **Step 4: 写失败测试（store 行为）**
+- [x] **Step 4: 写失败测试（store 行为）**
 
 `store.rs` 先写测试模块（实现留空函数下一步补）：
 
@@ -617,12 +617,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 5: 运行确认失败（函数未定义）**
+- [x] **Step 5: 运行确认失败（函数未定义）**
 
 Run: `cd backend && cargo test -p ght-core store`
 Expected: 编译失败，`upsert_repo` 等未定义。
 
-- [ ] **Step 6: 实现 store.rs**
+- [x] **Step 6: 实现 store.rs**
 
 测试模块之前写实现（`use chrono::NaiveDate; use sqlx::PgPool; use crate::models::{Board, LeaderboardRow, RepoInput, SnapshotInput};`）：
 
@@ -802,12 +802,12 @@ pub async fn board_count(pool: &PgPool, date: NaiveDate, board: Board) -> Result
 }
 ```
 
-- [ ] **Step 7: 运行测试确认通过**
+- [x] **Step 7: 运行测试确认通过**
 
 Run: `make db && cd backend && cargo test -p ght-core`
 Expected: 全部 PASS（含 Task 1 的 config 测试）。
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add -A && git commit -m "feat(core): schema migration, repo/snapshot upsert, leaderboard queries"
@@ -828,7 +828,7 @@ git add -A && git commit -m "feat(core): schema migration, repo/snapshot upsert,
 - Produces: `trending::{TrendingRepo, parse_trending_html(html: &str) -> Vec<TrendingRepo>, fetch_trending(client: &reqwest::Client, base: &str, lang: Option<&str>) -> anyhow::Result<Vec<TrendingRepo>>}`
 - `TrendingRepo { full_name: String, description: Option<String>, language: Option<String>, stars: i32, forks: i32, stars_today: i32 }`
 
-- [ ] **Step 1: 创建 fixture（模拟真实 trending 页面结构）**
+- [x] **Step 1: 创建 fixture（模拟真实 trending 页面结构）**
 
 `backend/crates/collector/tests/fixtures/trending.html`：
 
@@ -877,7 +877,7 @@ git add -A && git commit -m "feat(core): schema migration, repo/snapshot upsert,
 
 （第三个 article 无描述、无语言、无 stars today——覆盖缺失字段路径。）
 
-- [ ] **Step 2: 写失败测试**
+- [x] **Step 2: 写失败测试**
 
 `trending.rs` 先只写测试模块：
 
@@ -936,12 +936,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 3: 运行确认失败**
+- [x] **Step 3: 运行确认失败**
 
 Run: `cd backend && cargo test -p ght-collector`
 Expected: 编译失败，`parse_trending_html` 未定义。
 
-- [ ] **Step 4: 实现解析与抓取**
+- [x] **Step 4: 实现解析与抓取**
 
 测试模块之前写：
 
@@ -1026,12 +1026,12 @@ mod trending;
 fn main() {}
 ```
 
-- [ ] **Step 5: 运行测试确认通过**
+- [x] **Step 5: 运行测试确认通过**
 
 Run: `cd backend && cargo test -p ght-collector`
 Expected: 2 个测试 PASS。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A && git commit -m "feat(collector): github trending page parser + fetcher"
@@ -1051,7 +1051,7 @@ git add -A && git commit -m "feat(collector): github trending page parser + fetc
 - `search_top(client: &reqwest::Client, base: &str, token: Option<&str>, lang: Option<&str>, metric: Metric, per_page: u32, pages: u32) -> anyhow::Result<Vec<SearchRepo>>`
 - `SearchRepo { full_name, html_url, description: Option<String>, language: Option<String>, stars: i32, forks: i32 }`（字段均为 `pub`）
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 `search.rs` 测试模块：
 
@@ -1131,12 +1131,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd backend && cargo test -p ght-collector search`
 Expected: 编译失败，`search_top` 未定义。
 
-- [ ] **Step 3: 实现 search.rs**
+- [x] **Step 3: 实现 search.rs**
 
 ```rust
 use serde::Deserialize;
@@ -1227,12 +1227,12 @@ pub async fn search_top(
 
 `main.rs` 加 `mod search;`。
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `cd backend && cargo test -p ght-collector`
 Expected: 全部 PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat(collector): github search api client with pagination"
@@ -1252,7 +1252,7 @@ git add -A && git commit -m "feat(collector): github search api client with pagi
 - `fetch_watchers(client: &reqwest::Client, base: &str, token: &str, targets: &[WatchTarget], batch_size: usize) -> anyhow::Result<std::collections::HashMap<String, i32>>`（key = `owner/name`）
 - `WatchTarget { owner: String, name: String }`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 `graphql.rs` 测试模块：
 
@@ -1329,12 +1329,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd backend && cargo test -p ght-collector graphql`
 Expected: 编译失败。
 
-- [ ] **Step 3: 实现 graphql.rs**
+- [x] **Step 3: 实现 graphql.rs**
 
 ```rust
 use std::collections::HashMap;
@@ -1403,12 +1403,12 @@ pub async fn fetch_watchers(
 
 `main.rs` 加 `mod graphql;`。
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `cd backend && cargo test -p ght-collector`
 Expected: 全部 PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat(collector): graphql batch watchers client for watch board"
@@ -1430,7 +1430,7 @@ git add -A && git commit -m "feat(collector): graphql batch watchers client for 
   - `TopEntry { repo_full_name: String, html_url: String, description: Option<String>, language: Option<String>, stars: i32, forks: i32, watchers: Option<i32> }`
   - `collect::{Collector, Report}`；`Collector { pool: PgPool, http: reqwest::Client, settings: Settings, github_base: String, api_base: String }`；`Collector::collect_once(&self) -> Report`；`Report { ok: usize, failed: usize }`
 
-- [ ] **Step 1: 实现 store.rs（含单测）**
+- [x] **Step 1: 实现 store.rs（含单测）**
 
 ```rust
 use chrono::NaiveDate;
@@ -1527,7 +1527,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: 写 collect.rs 编排**
+- [x] **Step 2: 写 collect.rs 编排**
 
 ```rust
 use crate::graphql::{fetch_watchers, WatchTarget};
@@ -1694,7 +1694,7 @@ impl Collector {
 }
 ```
 
-- [ ] **Step 3: 写集成测试（wiremock + 测试库）**
+- [x] **Step 3: 写集成测试（wiremock + 测试库）**
 
 `collect.rs` 底部加测试模块：
 
@@ -1814,7 +1814,7 @@ mod tests {
 
 注意：`use wiremock::matchers::path_regex;` 放在模块内任何位置均可编译，若格式工具报警可移到模块顶部。集成测试耗时 ~15s（生产限速间隔），属预期；不得为测试缩短常量。
 
-- [ ] **Step 4: main.rs 挂模块并运行测试**
+- [x] **Step 4: main.rs 挂模块并运行测试**
 
 `main.rs`：
 
@@ -1831,7 +1831,7 @@ fn main() {}
 Run: `make db && cd backend && cargo test -p ght-collector -- --nocapture`
 Expected: 全部 PASS（含 2 个集成测试，耗时正常）。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat(collector): daily collection orchestration with per-language fault isolation"
@@ -1850,7 +1850,7 @@ git add -A && git commit -m "feat(collector): daily collection orchestration wit
 - Consumes: Task 1 `Settings`、Task 6 `Collector`
 - Produces: `ght_core::config::collect_time_parts(t: &str) -> Result<(u32, u32), ConfigError>`；collector 二进制支持 `--once`
 
-- [ ] **Step 1: 写失败测试（collect_time_parts）**
+- [x] **Step 1: 写失败测试（collect_time_parts）**
 
 `config.rs` tests 模块追加：
 
@@ -1865,7 +1865,7 @@ fn collect_time_parts_splits_hh_mm() {
 Run: `cd backend && cargo test -p ght-core collect_time_parts`
 Expected: FAIL，函数未定义。
 
-- [ ] **Step 2: 实现 collect_time_parts**
+- [x] **Step 2: 实现 collect_time_parts**
 
 `config.rs` 追加：
 
@@ -1879,7 +1879,7 @@ pub fn collect_time_parts(t: &str) -> Result<(u32, u32), ConfigError> {
 Run: `cd backend && cargo test -p ght-core`
 Expected: PASS。
 
-- [ ] **Step 3: 实现 main.rs**
+- [x] **Step 3: 实现 main.rs**
 
 ```rust
 mod collect;
@@ -1958,12 +1958,12 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-- [ ] **Step 4: 编译验证**
+- [x] **Step 4: 编译验证**
 
 Run: `cd backend && cargo build -p ght-collector`
 Expected: 编译成功。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat(collector): cli entrypoint with once mode and daily cron scheduling"
@@ -1987,7 +1987,7 @@ git add -A && git commit -m "feat(collector): cli entrypoint with once mode and 
   - `create_refresh_token(pool, user_id) -> Result<String, sqlx::Error>`（返回明文 token）
   - `rotate_refresh_token(pool, presented: &str) -> Result<i64, RefreshError>`（返回 user_id）
 
-- [ ] **Step 1: 写 users.rs 失败测试**
+- [x] **Step 1: 写 users.rs 失败测试**
 
 ```rust
 use sqlx::PgPool;
@@ -2109,12 +2109,12 @@ mod tests {
 
 注意测试中引用了 `RegisterError`——它是本任务要定义的核心类型，下一步实现。
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd backend && cargo test -p ght-core users`
 Expected: 编译失败。
 
-- [ ] **Step 3: 实现 users.rs**
+- [x] **Step 3: 实现 users.rs**
 
 在测试模块之前：
 
@@ -2254,12 +2254,12 @@ pub async fn revoke_invite(pool: &PgPool, code: &str) -> Result<bool, sqlx::Erro
 
 并把文件开头的结构体/错误定义（UserRow、InviteRow、InviteError、UserError）放在 use 之后、实现之前（测试中已引用）。`lib.rs` 加 `pub mod users;`，`core/Cargo.toml` `[dependencies]` 加 `rand = { workspace = true }`。
 
-- [ ] **Step 4: 运行 users 测试确认通过**
+- [x] **Step 4: 运行 users 测试确认通过**
 
 Run: `cd backend && cargo test -p ght-core users`
 Expected: 全部 PASS。
 
-- [ ] **Step 5: 写 refresh.rs 失败测试**
+- [x] **Step 5: 写 refresh.rs 失败测试**
 
 ```rust
 use chrono::{DateTime, Utc};
@@ -2344,7 +2344,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 6: 实现 refresh.rs**
+- [x] **Step 6: 实现 refresh.rs**
 
 token 生成/哈希放在 core（api 也要用），refresh.rs 顶部：
 
@@ -2436,12 +2436,12 @@ pub async fn delete_all_for_user(pool: &PgPool, user_id: i64) -> Result<(), sqlx
 
 `lib.rs` 加 `pub mod refresh;`；`core/Cargo.toml` 加 `sha2 = { workspace = true }`、`chrono = { workspace = true }`（已有则跳过）。
 
-- [ ] **Step 7: 运行测试确认通过**
+- [x] **Step 7: 运行测试确认通过**
 
 Run: `cd backend && cargo test -p ght-core`
 Expected: 全部 PASS。
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add -A && git commit -m "feat(core): user/invite registration and rotating refresh token store"
@@ -2463,7 +2463,7 @@ git add -A && git commit -m "feat(core): user/invite registration and rotating r
   - `cookies::{access_cookie, refresh_cookie, clear_cookies, read_cookie}`
 - Consumes: Task 8 `ght_core::refresh::{new_refresh_token, hash_token}`（api 不重复实现 token 生成）
 
-- [ ] **Step 1: 写 tokens.rs 失败测试**
+- [x] **Step 1: 写 tokens.rs 失败测试**
 
 `auth/mod.rs`：
 
@@ -2508,7 +2508,7 @@ mod tests {
 Run: `cd backend && cargo test -p ght-api`
 Expected: 编译失败。
 
-- [ ] **Step 2: 实现 tokens.rs**
+- [x] **Step 2: 实现 tokens.rs**
 
 ```rust
 use chrono::Utc;
@@ -2542,7 +2542,7 @@ pub fn verify_access(secret: &str, token: &str) -> Result<Claims, jsonwebtoken::
 }
 ```
 
-- [ ] **Step 3: 写 passwords.rs（测试 + 实现）**
+- [x] **Step 3: 写 passwords.rs（测试 + 实现）**
 
 ```rust
 pub fn hash_password(plain: &str) -> Result<String, bcrypt::BcryptError> {
@@ -2566,7 +2566,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 4: 写 cookies.rs（测试 + 实现）**
+- [x] **Step 4: 写 cookies.rs（测试 + 实现）**
 
 ```rust
 pub fn access_cookie(jwt: &str, secure: bool) -> String {
@@ -2627,12 +2627,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 5: 运行测试确认通过**
+- [x] **Step 5: 运行测试确认通过**
 
 Run: `cd backend && cargo test -p ght-api`
 Expected: 全部 PASS。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A && git commit -m "feat(api): stateless jwt tokens, bcrypt passwords, cookie helpers"
@@ -2655,7 +2655,7 @@ git add -A && git commit -m "feat(api): stateless jwt tokens, bcrypt passwords, 
   - `auth::routes::router(state) -> Router<AppState>`：挂载 `/register /login /refresh /me /logout`
   - 请求/响应 DTO：`RegisterReq { username, password, invite_code }`、`LoginReq { username, password }`、`MeResp { user_id, username }`、`AuthResp { username }`
 
-- [ ] **Step 1: state.rs 与 lib.rs**
+- [x] **Step 1: state.rs 与 lib.rs**
 
 `state.rs`：
 
@@ -2677,7 +2677,7 @@ pub mod auth;
 pub mod state;
 ```
 
-- [ ] **Step 2: extract.rs（RequireAuth）**
+- [x] **Step 2: extract.rs（RequireAuth）**
 
 ```rust
 use super::cookies;
@@ -2724,7 +2724,7 @@ impl FromRequestParts<AppState> for RequireAuth {
 }
 ```
 
-- [ ] **Step 3: 写 auth/routes.rs 失败测试**
+- [x] **Step 3: 写 auth/routes.rs 失败测试**
 
 `routes.rs` 测试模块（先写，路由实现下一步补）：
 
@@ -2920,12 +2920,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 4: 运行确认失败**
+- [x] **Step 4: 运行确认失败**
 
 Run: `cd backend && cargo test -p ght-api`
 Expected: 编译失败，`router` 未定义。
 
-- [ ] **Step 5: 实现 auth/routes.rs**
+- [x] **Step 5: 实现 auth/routes.rs**
 
 测试模块之前：
 
@@ -3105,12 +3105,12 @@ async fn me(RequireAuth(claims): RequireAuth) -> impl IntoResponse {
 
 职责约定（Task 8 已按此实现）：`rotate_refresh_token` 只负责校验 + 作废（置 `used_at`）旧 token，返回 user_id，**不插入新行**；新 refresh token 由本 handler 调 `create_refresh_token` 签发。二者各管一段，避免双插。
 
-- [ ] **Step 6: 运行测试确认通过**
+- [x] **Step 6: 运行测试确认通过**
 
 Run: `cd backend && cargo test -p ght-api && cargo test -p ght-core refresh`
 Expected: 全部 PASS。
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add -A && git commit -m "feat(api): state/extract/auth routes with rotating refresh tokens"
@@ -3131,7 +3131,7 @@ git add -A && git commit -m "feat(api): state/extract/auth routes with rotating 
 - Produces: `lib::build_router(state: AppState) -> Router`（含 `/api/auth/*`、`/api/leaderboard/*`、`/api/languages`、`/api/meta`、`/api/health` 与静态 fallback）
 - 端点（spec §6）：`GET /api/leaderboard/top?metric=stars|forks|watchers&language=`、`GET /api/leaderboard/trending?language=`、`GET /api/languages`、`GET /api/meta`、`GET /api/health`
 
-- [ ] **Step 1: 写 routes_leaderboard.rs 失败测试**
+- [x] **Step 1: 写 routes_leaderboard.rs 失败测试**
 
 ```rust
 #[cfg(test)]
@@ -3274,12 +3274,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd backend && cargo test -p ght-api leaderboard`
 Expected: 编译失败，`build_router`/handlers 未定义。
 
-- [ ] **Step 3: 实现 routes_leaderboard.rs**
+- [x] **Step 3: 实现 routes_leaderboard.rs**
 
 测试模块之前：
 
@@ -3461,7 +3461,7 @@ async fn health() -> impl IntoResponse {
 }
 ```
 
-- [ ] **Step 4: lib.rs 组装 build_router**
+- [x] **Step 4: lib.rs 组装 build_router**
 
 `lib.rs`：
 
@@ -3484,7 +3484,7 @@ pub fn build_router(state: AppState) -> Router {
 
 注意 `auth::mod.rs` 需 `pub mod routes; pub mod extract;`（extract/routes 已在 Task 10 建好，确保 mod.rs 声明齐全）。
 
-- [ ] **Step 5: main.rs**
+- [x] **Step 5: main.rs**
 
 ```rust
 use ght_core::config::Settings;
@@ -3517,12 +3517,12 @@ async fn main() -> anyhow::Result<()> {
 
 `api/Cargo.toml` 确认含 `tower-http`（fs、trace feature）、`tokio`、`anyhow`、`tracing-subscriber`。
 
-- [ ] **Step 6: 运行测试确认通过**
+- [x] **Step 6: 运行测试确认通过**
 
 Run: `cd backend && cargo test -p ght-api`
 Expected: 全部 PASS。
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add -A && git commit -m "feat(api): leaderboard/languages/meta/health routes and static fallback"
@@ -3545,7 +3545,7 @@ git add -A && git commit -m "feat(api): leaderboard/languages/meta/health routes
   - `invite list`
   - `invite revoke <code>`
 
-- [ ] **Step 1: 实现 main.rs**
+- [x] **Step 1: 实现 main.rs**
 
 ```rust
 use clap::{Parser, Subcommand};
@@ -3640,7 +3640,7 @@ fn bcrypt_hash(password: &str) -> anyhow::Result<String> {
 
 `admin/Cargo.toml` 依赖补 `bcrypt = { workspace = true }`。
 
-- [ ] **Step 2: 手工端到端验证**
+- [x] **Step 2: 手工端到端验证**
 
 前置：`make db`，导出 `DATABASE_URL` 与 `JWT_SECRET`（可用 `.env.example` 复制为 `.env` 后 `export $(grep -v '^#' .env | xargs)`）。
 
@@ -3656,7 +3656,7 @@ Expected: 首条创建用户成功；第二条打印一个邀请码；第三条�
 Run: `cargo run -p ght-admin -- invite revoke <上一步的码> && cargo run -p ght-admin -- invite list`
 Expected: 该码状态变为 `revoked`。
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add -A && git commit -m "feat(admin): cli for bootstrap user and invite code management"
@@ -3675,7 +3675,7 @@ git add -A && git commit -m "feat(admin): cli for bootstrap user and invite code
 - Produces: `api<T>(path, init?) -> Promise<T>`（401 自动 refresh 重放一次，再失败抛 `UnauthorizedError`）、`postAuth(path, body?) -> Promise<Response>`、`startRefreshTimer(onExpired) -> () => void`、`compact(n) -> string`
 - Consumes: 后端 `/api/*` 契约（Task 10/11）
 
-- [ ] **Step 1: 脚手架**
+- [x] **Step 1: 脚手架**
 
 Run:
 ```bash
@@ -3713,7 +3713,7 @@ export default defineConfig({
 
 `package.json` scripts 加 `"test": "vitest run"`。
 
-- [ ] **Step 2: types.ts**
+- [x] **Step 2: types.ts**
 
 ```ts
 export interface LeaderboardItem {
@@ -3746,7 +3746,7 @@ export interface LanguageOption {
 }
 ```
 
-- [ ] **Step 3: 写失败测试 api.test.ts**
+- [x] **Step 3: 写失败测试 api.test.ts**
 
 ```ts
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
@@ -3801,7 +3801,7 @@ describe("api 401 handling", () => {
 Run: `cd frontend && npm test`
 Expected: FAIL（api.ts 不存在）。
 
-- [ ] **Step 4: 实现 api.ts**
+- [x] **Step 4: 实现 api.ts**
 
 ```ts
 export class UnauthorizedError extends Error {
@@ -3873,12 +3873,12 @@ export function compact(n: number): string {
 }
 ```
 
-- [ ] **Step 5: 运行测试确认通过**
+- [x] **Step 5: 运行测试确认通过**
 
 Run: `cd frontend && npm test`
 Expected: 全部 PASS。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A && git commit -m "feat(frontend): vite scaffold, api client with refresh retry, types"
@@ -3897,7 +3897,7 @@ git add -A && git commit -m "feat(frontend): vite scaffold, api client with refr
 - Consumes: Task 13 `api`、`postAuth`、`startRefreshTimer`、`MeResponse`
 - Produces: `AuthCard({ onLoggedIn: (username: string) => void })`；App 登录态三态（loading/anon/user）
 
-- [ ] **Step 1: AuthCard.tsx**
+- [x] **Step 1: AuthCard.tsx**
 
 ```tsx
 import { useState } from "react";
@@ -3985,7 +3985,7 @@ export default function AuthCard({ onLoggedIn }: { onLoggedIn: (username: string
 }
 ```
 
-- [ ] **Step 2: App.tsx 登录态门**
+- [x] **Step 2: App.tsx 登录态门**
 
 ```tsx
 import { useEffect, useState } from "react";
@@ -4035,7 +4035,7 @@ export default function App() {
 
 `main.tsx` 保持模板默认（渲染 `<App />`，引入 `index.css`）。
 
-- [ ] **Step 3: 手工验证**
+- [x] **Step 3: 手工验证**
 
 前置：后端已跑（`make api`），已用 admin 建邀请码。
 
@@ -4047,7 +4047,7 @@ Run: `cd frontend && npm run dev`，浏览器开 `http://localhost:5173`
 4. 刷新页面 → 仍保持登录（me + cookie）
 5. 登出 → 回到登录卡片
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add -A && git commit -m "feat(frontend): auth card and login gate with refresh timer"
@@ -4067,7 +4067,7 @@ git add -A && git commit -m "feat(frontend): auth card and login gate with refre
 - Consumes: Task 13 `api`、types；后端 `/api/leaderboard/*`、`/api/languages`、`/api/meta`
 - URL query 契约：`board=trending|top`、`metric=stars|forks|watchers`（仅 top 生效）、`lang=<language>`
 
-- [ ] **Step 1: Controls.tsx**
+- [x] **Step 1: Controls.tsx**
 
 ```tsx
 export type BoardKind = "trending" | "top";
@@ -4126,7 +4126,7 @@ export default function Controls({ board, metric, language, languages, onBoard, 
 }
 ```
 
-- [ ] **Step 2: LeaderboardTable.tsx**
+- [x] **Step 2: LeaderboardTable.tsx**
 
 ```tsx
 import { compact } from "../api";
@@ -4204,7 +4204,7 @@ export default function LeaderboardTable({ items, board, metric }: Props) {
 }
 ```
 
-- [ ] **Step 3: Leaderboard.tsx（数据加载 + URL 同步）**
+- [x] **Step 3: Leaderboard.tsx（数据加载 + URL 同步）**
 
 ```tsx
 import { useCallback, useEffect, useState } from "react";
@@ -4300,7 +4300,7 @@ export default function Leaderboard({ username, onLogout }: Props) {
 }
 ```
 
-- [ ] **Step 4: README.md**
+- [x] **Step 4: README.md**
 
 ```markdown
 # GH Trending
@@ -4345,7 +4345,7 @@ make web                    # 前端 dev server :5173
 | make test | 全量测试（cargo test + vitest） |
 ```
 
-- [ ] **Step 5: 端到端手工验收**
+- [x] **Step 5: 端到端手工验收**
 
 前置：`.env` 配好（含有效 `GITHUB_TOKEN`）、`make db` 已运行。
 
@@ -4360,7 +4360,7 @@ make web                    # 前端 dev server :5173
    - 登出 → 回到登录卡片
 5. `make test` 全绿。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A && git commit -m "feat(frontend): leaderboard ui with url-synced filters, readme, e2e verified"
