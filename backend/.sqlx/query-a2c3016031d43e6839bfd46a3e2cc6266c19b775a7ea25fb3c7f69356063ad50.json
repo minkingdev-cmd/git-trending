@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT snapshot_date AS \"snapshot_date!\"\n           FROM snapshots\n           WHERE board = $1\n           ORDER BY snapshot_date DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "snapshot_date!",
+        "type_info": "Date"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a2c3016031d43e6839bfd46a3e2cc6266c19b775a7ea25fb3c7f69356063ad50"
+}

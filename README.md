@@ -7,57 +7,104 @@
 | 组件 | 说明 |
 |------|------|
 | `ght-collector` | 每日抓取 worker（常驻 cron 或 `--once`） |
-| `ght-api` | axum 只读 API + 认证（JWT access + refresh 轮换） |
+| `ght-api` | axum API + 认证 + 静态前端 |
 | `ght-admin` | 管理 CLI：bootstrap 用户、邀请码 |
 | `frontend` | React + Vite + Tailwind 单页 |
+| `deploy/k8s` | Deployment + CronJob 示例 |
 
-## 快速开始
+**管理员**：通过 CLI 创建的 bootstrap 用户（无邀请码）自动拥有管理权限，可在前端「管理」页维护邀请码与用户列表。
+
+## 快速开始（本地开发）
 
 ```bash
-cp .env.example .env        # 按需修改（GITHUB_TOKEN 强烈建议填写，watch 榜必需）
+cp .env.example .env
 set -a && source .env && set +a
-make db                     # 启动 PostgreSQL
-make admin                  # 创建首个账号（bootstrap）
-cd backend && cargo run -p ght-admin -- invite create   # 生成注册用邀请码
-make collect                # 首次抓取（需网络；无 token 时 watch 榜自动跳过）
-make api                    # 启动 API :8000
-make web                    # 前端 dev server :5173
+make db
+make admin                  # admin / change-me-now（bootstrap 管理员）
+cd backend && cargo run -p ght-admin -- invite create
+make collect                # 首次抓取（建议设置 GITHUB_TOKEN）
+make api                    # :8000
+make web                    # :5173 代理 /api
 ```
 
-打开 http://localhost:5173，用邀请码注册后登录。
+打开 http://localhost:5173。
+
+## Docker 全栈
+
+```bash
+# 可选：先生成 sqlx offline 缓存，便于无 DB 的镜像构建
+make db && make sqlx-prepare
+
+export JWT_SECRET=change-me
+export GITHUB_TOKEN=ghp_xxx   # 可选
+make stack                    # postgres + api 构建启动，并跑一次 collector
+```
+
+访问 http://localhost:8000（API 同源托管前端）。
+
+```bash
+make stack-down
+```
+
+## Kubernetes
+
+示例清单在 `deploy/k8s/`：
+
+1. 构建并推送镜像 `gh-trending:latest`
+2. 复制 `secret.example.yaml` → 填真实密钥 → apply
+3. `kubectl apply -f deploy/k8s/api-deployment.yaml`
+4. `kubectl apply -f deploy/k8s/collector-cronjob.yaml`
+
+Collector 使用 `--once`，适合 CronJob；API 为 Deployment。
 
 ## 常用命令
 
 ```bash
-make db          # 启动 PostgreSQL 并等待就绪
-make db-down     # 停止 PostgreSQL
-make collect     # 单次抓取
-make dev-all     # collector 常驻（每日 COLLECT_TIME 自动跑）
-make api         # API :8000
-make admin       # bootstrap 用户 admin / change-me-now
-make web         # 前端 :5173（代理 /api → :8000）
-make test        # 后端 + 前端测试
+make db / db-down
+make collect / dev-all
+make api / admin / web
+make test
+make docker-build / stack / stack-down
+make sqlx-prepare
 ```
 
 ## 环境变量
 
-见 `.env.example`：
-
 | 变量 | 必填 | 说明 |
 |------|------|------|
-| `DATABASE_URL` | ✅ | PostgreSQL 连接串 |
-| `JWT_SECRET` | ✅ | JWT 签名密钥 |
-| `GITHUB_TOKEN` | watch 榜必填 | 缺失时 watch 榜跳过 |
-| `LANGUAGES` | ❌ | 逗号分隔语言列表 |
+| `DATABASE_URL` | ✅ | PostgreSQL |
+| `JWT_SECRET` | ✅ | JWT 密钥 |
+| `GITHUB_TOKEN` | watch 榜 | 缺失则跳过 watch |
+| `LANGUAGES` | ❌ | 逗号分隔语言 |
 | `COLLECT_TIME` | ❌ | 默认 `09:00` |
-| `COOKIE_SECURE` | ❌ | 生产设 `true` |
+| `COOKIE_SECURE` | ❌ | 生产 `true` |
+| `STATIC_DIR` | ❌ | 前端 dist 路径（Docker 默认 `/app/frontend/dist`） |
 
-## 数据口径说明
+## 功能说明
 
-- **趋势榜**：来自 `github.com/trending`，每语言约 25 条，按「stars today」排序。
-- **总榜 star/fork**：GitHub Search API 每语言 top 100。
-- **总榜 watch**：在 star top 500 候选池内用 GraphQL 查 `watchers.totalCount` 再取 top 100（假设 watch 与 star 强相关）。
-- 快照按天落库；UI 展示最新快照。rank 在查询时按语言过滤后用窗口函数重算。
+### 榜单
+
+- 趋势榜 / 总榜（Star · Fork · Watch），按语言筛选
+- **历史日期**：下拉选择已有快照日（`?date=YYYY-MM-DD`）
+- **Repo 趋势**：点击行内「趋势」查看近 90 天快照折线图
+
+### 认证
+
+- 邀请码注册；access JWT 15 分钟 + refresh 30 天轮换
+- 前端 10 分钟静默 refresh；401 自动重试一次
+
+### 管理后台
+
+- 仅 bootstrap 管理员可见
+- 生成 / 作废邀请码、查看用户列表
+- 亦可用 CLI：`ght-admin invite create|list|revoke`
+
+## 数据口径
+
+- **趋势榜**：`github.com/trending`，每语言约 25 条
+- **总榜 star/fork**：Search API top 100
+- **总榜 watch**：star top500 候选池 + GraphQL `watchers.totalCount` 再取 top100
+- 快照按天落库；rank 查询时重算
 
 ## 测试
 

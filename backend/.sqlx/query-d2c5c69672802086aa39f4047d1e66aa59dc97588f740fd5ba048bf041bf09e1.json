@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, max_uses, used_count, revoked FROM invite_codes WHERE code = $1 FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "max_uses",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "used_count",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "revoked",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "d2c5c69672802086aa39f4047d1e66aa59dc97588f740fd5ba048bf041bf09e1"
+}

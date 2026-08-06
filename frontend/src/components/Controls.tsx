@@ -6,9 +6,12 @@ interface Props {
   metric: Metric;
   language: string;
   languages: { language: string; count: number }[];
+  date: string;
+  dates: string[];
   onBoard: (b: BoardKind) => void;
   onMetric: (m: Metric) => void;
   onLanguage: (l: string) => void;
+  onDate: (d: string) => void;
 }
 
 export default function Controls({
@@ -16,9 +19,12 @@ export default function Controls({
   metric,
   language,
   languages,
+  date,
+  dates,
   onBoard,
   onMetric,
   onLanguage,
+  onDate,
 }: Props) {
   return (
     <div className="flex flex-wrap items-center gap-4 border-b border-neutral-800 pb-4">
@@ -62,6 +68,20 @@ export default function Controls({
         {languages.map((l) => (
           <option key={l.language} value={l.language}>
             {l.language} ({l.count})
+          </option>
+        ))}
+      </select>
+
+      <select
+        className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm"
+        value={date}
+        onChange={(e) => onDate(e.target.value)}
+        title="快照日期"
+      >
+        <option value="">最新</option>
+        {dates.map((d) => (
+          <option key={d} value={d}>
+            {d}
           </option>
         ))}
       </select>

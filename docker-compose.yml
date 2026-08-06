@@ -15,5 +15,44 @@ services:
       interval: 2s
       timeout: 2s
       retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: ["stack"]
+    environment:
+      DATABASE_URL: postgres://ght:ght@postgres:5432/ghtrending
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      LANGUAGES: ${LANGUAGES:-}
+      STATIC_DIR: /app/frontend/dist
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["ght-api"]
+
+  collector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: ["stack"]
+    environment:
+      DATABASE_URL: postgres://ght:ght@postgres:5432/ghtrending
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      LANGUAGES: ${LANGUAGES:-}
+      COLLECT_TIME: ${COLLECT_TIME:-09:00}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Default: single run then exit (k8s CronJob style). Override for daemon:
+    # command: ["ght-collector"]
+    command: ["ght-collector", "--once"]
+    restart: "no"
+
 volumes:
   pgdata:

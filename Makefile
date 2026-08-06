@@ -1,4 +1,4 @@
-.PHONY: db db-down collect dev-all api admin web test
+.PHONY: db db-down collect dev-all api admin web test stack stack-down docker-build sqlx-prepare
 
 db:
 	docker compose up -d postgres
@@ -25,3 +25,18 @@ web:
 test:
 	cd backend && DATABASE_URL=postgres://ght:ght@localhost:5433/ghtrending cargo test
 	cd frontend && npm test
+
+# Generate .sqlx offline data (requires make db + DATABASE_URL)
+sqlx-prepare:
+	cd backend && DATABASE_URL=postgres://ght:ght@localhost:5433/ghtrending cargo sqlx prepare --workspace
+
+docker-build:
+	docker compose --profile stack build
+
+# Full stack: postgres + api + one-shot collector
+stack:
+	docker compose --profile stack up -d --build postgres api
+	docker compose --profile stack run --rm collector || true
+
+stack-down:
+	docker compose --profile stack down

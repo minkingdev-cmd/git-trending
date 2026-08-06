@@ -43,6 +43,7 @@ pub struct AuthResp {
 pub struct MeResp {
     pub user_id: i64,
     pub username: String,
+    pub is_admin: bool,
 }
 
 fn unauthorized(msg: &str) -> impl IntoResponse {
@@ -197,10 +198,14 @@ async fn logout(State(state): State<AppState>, headers: axum::http::HeaderMap) -
     resp
 }
 
-async fn me(RequireAuth(claims): RequireAuth) -> impl IntoResponse {
+async fn me(State(state): State<AppState>, RequireAuth(claims): RequireAuth) -> impl IntoResponse {
+    let is_admin = users::is_bootstrap_admin(&state.pool, claims.sub)
+        .await
+        .unwrap_or(false);
     Json(MeResp {
         user_id: claims.sub,
         username: claims.username,
+        is_admin,
     })
 }
 

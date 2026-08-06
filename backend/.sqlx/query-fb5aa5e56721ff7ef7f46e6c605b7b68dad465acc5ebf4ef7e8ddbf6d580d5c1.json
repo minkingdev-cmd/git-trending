@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE invite_codes SET revoked = true WHERE code = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fb5aa5e56721ff7ef7f46e6c605b7b68dad465acc5ebf4ef7e8ddbf6d580d5c1"
+}

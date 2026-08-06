@@ -197,6 +197,60 @@ pub async fn board_count(pool: &PgPool, date: NaiveDate, board: Board) -> Result
     Ok(rec.cnt.unwrap_or(0))
 }
 
+/// All distinct snapshot dates for a board, newest first.
+pub async fn list_snapshot_dates(pool: &PgPool, board: Board) -> Result<Vec<NaiveDate>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"SELECT DISTINCT snapshot_date AS "snapshot_date!"
+           FROM snapshots
+           WHERE board = $1
+           ORDER BY snapshot_date DESC"#,
+        board.as_str()
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| r.snapshot_date).collect())
+}
+
+/// Daily metric history for one repo on one board (oldest first).
+pub async fn repo_history(
+    pool: &PgPool,
+    full_name: &str,
+    board: Board,
+    from: NaiveDate,
+    to: NaiveDate,
+) -> Result<Vec<crate::models::HistoryPoint>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"SELECT s.snapshot_date AS "snapshot_date!",
+                  s.stars AS "stars!",
+                  s.forks AS "forks!",
+                  s.watchers,
+                  s.stars_today
+           FROM snapshots s
+           JOIN repos r ON r.id = s.repo_id
+           WHERE r.full_name = $1
+             AND s.board = $2
+             AND s.snapshot_date >= $3
+             AND s.snapshot_date <= $4
+           ORDER BY s.snapshot_date ASC"#,
+        full_name,
+        board.as_str(),
+        from,
+        to
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| crate::models::HistoryPoint {
+            snapshot_date: r.snapshot_date,
+            stars: r.stars,
+            forks: r.forks,
+            watchers: r.watchers,
+            stars_today: r.stars_today,
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

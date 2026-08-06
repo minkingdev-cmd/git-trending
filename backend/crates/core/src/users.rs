@@ -93,6 +93,44 @@ pub async fn find_username_by_id(pool: &PgPool, user_id: i64) -> Result<Option<S
     Ok(rec.map(|r| r.username))
 }
 
+/// Bootstrap users (created via CLI, no invite) are treated as admins.
+pub async fn is_bootstrap_admin(pool: &PgPool, user_id: i64) -> Result<bool, sqlx::Error> {
+    let rec = sqlx::query!(
+        "SELECT created_by_invite FROM users WHERE id = $1",
+        user_id
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(rec.map(|r| r.created_by_invite.is_none()).unwrap_or(false))
+}
+
+#[derive(Debug, Clone)]
+pub struct UserListItem {
+    pub id: i64,
+    pub username: String,
+    pub is_admin: bool,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+pub async fn list_users(pool: &PgPool) -> Result<Vec<UserListItem>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"SELECT id, username, created_by_invite, created_at
+           FROM users
+           ORDER BY id ASC"#
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| UserListItem {
+            id: r.id,
+            username: r.username,
+            is_admin: r.created_by_invite.is_none(),
+            created_at: r.created_at,
+        })
+        .collect())
+}
+
 pub fn generate_invite_code() -> String {
     let mut bytes = [0u8; 12];
     rand::thread_rng().fill_bytes(&mut bytes);

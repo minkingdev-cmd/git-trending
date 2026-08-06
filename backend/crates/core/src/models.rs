@@ -15,6 +15,25 @@ impl Board {
             Board::TopWatchers => "top_watchers",
         }
     }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "trending_daily" => Some(Board::TrendingDaily),
+            "top_stars" => Some(Board::TopStars),
+            "top_forks" => Some(Board::TopForks),
+            "top_watchers" => Some(Board::TopWatchers),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HistoryPoint {
+    pub snapshot_date: chrono::NaiveDate,
+    pub stars: i32,
+    pub forks: i32,
+    pub watchers: Option<i32>,
+    pub stars_today: Option<i32>,
 }
 
 #[derive(Debug, Clone)]

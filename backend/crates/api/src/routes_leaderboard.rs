@@ -12,11 +12,15 @@ use serde::{Deserialize, Serialize};
 pub struct TopParams {
     pub metric: String,
     pub language: Option<String>,
+    /// Optional snapshot date YYYY-MM-DD; defaults to latest
+    pub date: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct TrendingParams {
     pub language: Option<String>,
+    /// Optional snapshot date YYYY-MM-DD; defaults to latest
+    pub date: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -82,9 +86,22 @@ async fn top(
                 .into_response()
         }
     };
-    let date = match store::latest_snapshot_date(&state.pool, board).await {
-        Ok(Some(d)) => d,
-        _ => {
+    let date = match crate::routes_history::resolve_date(
+        &state.pool,
+        board,
+        params.date.as_deref(),
+    )
+    .await
+    {
+        Some(d) => d,
+        None if params.date.is_some() => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error":"invalid date, expected YYYY-MM-DD"})),
+            )
+                .into_response()
+        }
+        None => {
             return Json(LeaderboardResp {
                 date: String::new(),
                 board: board.as_str().to_string(),
@@ -119,9 +136,22 @@ async fn trending(
     Query(params): Query<TrendingParams>,
 ) -> impl IntoResponse {
     let board = Board::TrendingDaily;
-    let date = match store::latest_snapshot_date(&state.pool, board).await {
-        Ok(Some(d)) => d,
-        _ => {
+    let date = match crate::routes_history::resolve_date(
+        &state.pool,
+        board,
+        params.date.as_deref(),
+    )
+    .await
+    {
+        Some(d) => d,
+        None if params.date.is_some() => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error":"invalid date, expected YYYY-MM-DD"})),
+            )
+                .into_response()
+        }
+        None => {
             return Json(LeaderboardResp {
                 date: String::new(),
                 board: board.as_str().to_string(),
@@ -177,9 +207,16 @@ async fn meta(State(state): State<AppState>, _auth: RequireAuth) -> impl IntoRes
             counts.insert(board.as_str().to_string(), serde_json::json!(n));
         }
     }
+    let dates = store::list_snapshot_dates(&state.pool, Board::TopStars)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|d| d.format("%Y-%m-%d").to_string())
+        .collect::<Vec<_>>();
     Json(serde_json::json!({
         "date": date.map(|d| d.format("%Y-%m-%d").to_string()),
         "boards": counts,
+        "dates": dates,
     }))
 }
 
