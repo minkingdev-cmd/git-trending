@@ -203,6 +203,7 @@ mod tests {
     use crate::db;
     use crate::models::{Board, RepoInput, SnapshotInput};
     use chrono::NaiveDate;
+    use serial_test::serial;
     use sqlx::PgPool;
 
     pub async fn test_pool() -> PgPool {
@@ -228,6 +229,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn upsert_repo_is_idempotent_and_updates_fields() {
         let pool = test_pool().await;
         let date = NaiveDate::from_ymd_opt(2026, 8, 6).unwrap();
@@ -249,6 +251,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn upsert_snapshot_same_day_same_board_one_row() {
         let pool = test_pool().await;
         let date = NaiveDate::from_ymd_opt(2026, 8, 6).unwrap();
@@ -264,6 +267,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn rank_recomputed_after_language_filter() {
         let pool = test_pool().await;
         let date = NaiveDate::from_ymd_opt(2026, 8, 6).unwrap();
@@ -307,6 +311,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn trending_ordered_by_stars_today() {
         let pool = test_pool().await;
         let date = NaiveDate::from_ymd_opt(2026, 8, 6).unwrap();
@@ -329,6 +334,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn latest_snapshot_date_returns_max() {
         let pool = test_pool().await;
         let d1 = NaiveDate::from_ymd_opt(2026, 8, 5).unwrap();
