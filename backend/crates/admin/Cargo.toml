@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+ght-core = { path = "../core" }
 clap = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
+bcrypt = { workspace = true }
