@@ -267,7 +267,13 @@ mod tests {
     async fn rank_recomputed_after_language_filter() {
         let pool = test_pool().await;
         let date = NaiveDate::from_ymd_opt(2026, 8, 6).unwrap();
-        for (name, lang, stars) in [("rank/py1", "Python", 300), ("rank/py2", "Python", 100), ("rank/rs1", "Rust", 200)] {
+        // Use a unique language so no other test's rows appear in the filtered query
+        let unique_lang = "ZigTestRank";
+        for (name, lang, stars) in [
+            ("rank/py1", unique_lang, 300),
+            ("rank/py2", unique_lang, 100),
+            ("rank/rs1", "Rust", 200),
+        ] {
             let id = upsert_repo(&pool, &repo(name, Some(lang)), date).await.unwrap();
             upsert_snapshot(
                 &pool,
@@ -279,20 +285,25 @@ mod tests {
             .await
             .unwrap();
         }
+        // UNFILTERED: only assert ordering and strictly-increasing ranks among our own rows
         let all = top_by_stars(&pool, date, None, 100).await.unwrap();
-        let all: Vec<_> = all.into_iter().filter(|r| r.full_name.starts_with("rank/")).collect();
+        let mine: Vec<_> = all.into_iter().filter(|r| r.full_name.starts_with("rank/")).collect();
         assert_eq!(
-            all.iter().map(|r| r.full_name.clone()).collect::<Vec<_>>(),
+            mine.iter().map(|r| r.full_name.clone()).collect::<Vec<_>>(),
             vec!["rank/py1", "rank/rs1", "rank/py2"]
         );
-        assert_eq!(all.iter().map(|r| r.rank).collect::<Vec<_>>(), vec![1, 2, 3]);
-        let py = top_by_stars(&pool, date, Some("Python"), 100).await.unwrap();
-        let py: Vec<_> = py.into_iter().filter(|r| r.full_name.starts_with("rank/")).collect();
+        assert!(
+            mine.windows(2).all(|w| w[0].rank < w[1].rank),
+            "ranks must be strictly increasing: {:?}",
+            mine.iter().map(|r| r.rank).collect::<Vec<_>>()
+        );
+        // LANGUAGE-FILTERED: unique language guarantees we control all matching rows
+        let filtered = top_by_stars(&pool, date, Some(unique_lang), 100).await.unwrap();
         assert_eq!(
-            py.iter().map(|r| r.full_name.clone()).collect::<Vec<_>>(),
+            filtered.iter().map(|r| r.full_name.clone()).collect::<Vec<_>>(),
             vec!["rank/py1", "rank/py2"]
         );
-        assert_eq!(py.iter().map(|r| r.rank).collect::<Vec<_>>(), vec![1, 2]);
+        assert_eq!(filtered.iter().map(|r| r.rank).collect::<Vec<_>>(), vec![1, 2]);
     }
 
     #[tokio::test]
