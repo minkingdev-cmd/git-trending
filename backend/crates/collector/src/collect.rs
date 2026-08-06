@@ -28,6 +28,10 @@ pub struct Report {
 // 提到 2.5s（≈24 次/分钟）留出余量，确保含 watch 候选的完整抓取不被限流。
 const SEARCH_INTERVAL: Duration = Duration::from_millis(2500);
 const TRENDING_INTERVAL: Duration = Duration::from_millis(2000);
+// 实测：stars/forks 阶段的连续搜索会触发二级限流，余波持续到 watch 候选
+// 阶段开头（前几个语言必 403，之后窗口恢复）。进入 watch 阶段前先冷却，
+// 让二级限流窗口过去，避免候选池整段丢失。
+const WATCH_PHASE_COOLDOWN: Duration = Duration::from_secs(45);
 
 impl Collector {
     fn langs(&self) -> Vec<Option<String>> {
@@ -83,6 +87,7 @@ impl Collector {
         match token {
             None => tracing::warn!("GITHUB_TOKEN not set; skipping watch board"),
             Some(token) => {
+                tokio::time::sleep(WATCH_PHASE_COOLDOWN).await;
                 for lang in self.langs() {
                     let pool_candidates = search_top(&self.http, &self.api_base, Some(token), lang.as_deref(), Metric::Stars, 100, 5).await;
                     match pool_candidates {
