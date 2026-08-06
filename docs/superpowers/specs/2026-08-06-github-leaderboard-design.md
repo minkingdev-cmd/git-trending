@@ -67,7 +67,7 @@ gh-trending/
 │   │   │           └── routes.rs      #   /api/auth/*
 │   │   └── admin/                     # ── 二进制 3：管理 CLI（clap subcommands）──
 ├── frontend/                          # React + Vite + Tailwind
-├── docker-compose.yml                 # PG + collector + api
+├── docker-compose.yml                 # 本地起 PG；collector/api 服务随部署镜像后补
 └── Makefile
 ```
 
@@ -323,7 +323,7 @@ make admin     # cargo run -p ght-admin -- create-user  （首个账号 bootstra
 make test      # cargo test（需测试库）+ npm test
 ```
 
-docker-compose.yml 包含 PG + collector + api 三件套，`docker compose up` 即完整系统（部署形态后补时的基础）。迁移文件在两个长驻二进制启动时通过 `sqlx::migrate!()` 自动执行（幂等）。
+本地开发 docker-compose 只起 PostgreSQL（`make db`），collector 与 api 直接 `cargo run`（见上表）；把两个服务编入 compose 需要 Dockerfile 镜像，随部署方案一起后补（见 §14）。迁移文件在两个长驻二进制启动时通过 `sqlx::migrate!()` 自动执行（幂等）。
 
 注意：SQLx `query!` 宏需要编译期可连数据库。本地先 `make db` 再 `cargo build`；无库环境（如 CI 构建镜像）设置 `SQLX_OFFLINE=true` 使用提交到仓库的 `.sqlx/` 查询缓存。
 
