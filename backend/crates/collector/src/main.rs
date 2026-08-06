@@ -55,7 +55,7 @@ async fn main() -> anyhow::Result<()> {
 
     let (hour, minute) = collect_time_parts(&settings.collect_time)?;
     let cron = format!("0 {minute} {hour} * * *");
-    let scheduler = JobScheduler::new().await?;
+    let mut scheduler = JobScheduler::new().await?;
     let ctx = collector.clone();
     scheduler
         .add(Job::new_async(cron.as_str(), move |_uuid, _lock| {
@@ -70,5 +70,8 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(collect_time = %settings.collect_time, "collector daemon started");
     tokio::signal::ctrl_c().await?;
     tracing::info!("collector shutting down");
+    if let Err(e) = scheduler.shutdown().await {
+        tracing::warn!(error = %e, "scheduler shutdown failed");
+    }
     Ok(())
 }
