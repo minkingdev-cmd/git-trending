@@ -12,7 +12,7 @@
 
 - Rust edition 一律 `2021`；crate 名 `ght-core` / `ght-collector` / `ght-api` / `ght-admin`，目录 `backend/crates/<name 去掉 ght- 前缀>`。
 - **SQLx 编译期依赖数据库**：含 `sqlx::query!` 的代码编译前必须 `make db` 且 `DATABASE_URL` 指向运行中的 PG（本计划全部使用 `query!`/`query_as!` 宏）。
-- 测试数据库：`DATABASE_URL_TEST`，默认 `postgres://ght:ght@localhost:5432/ghtrending_test`。
+- 测试数据库：`DATABASE_URL_TEST`，默认 `postgres://ght:ght@localhost:5433/ghtrending_test`。
 - **无外键**：迁移文件禁止 `REFERENCES` / `FOREIGN KEY` / `ON DELETE`；跨表引用列建普通索引。
 - 认证常量：access JWT 15 分钟；refresh 30 天；前端定时刷新 10 分钟。
 - Cookie：`access_token` 为 `HttpOnly; SameSite=Lax; Path=/`；`refresh_token` 为 `HttpOnly; SameSite=Lax; Path=/api/auth`；`COOKIE_SECURE=true` 时追加 `Secure`。
@@ -279,7 +279,7 @@ services:
       POSTGRES_PASSWORD: ght
       POSTGRES_DB: ghtrending
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./dev/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
@@ -333,8 +333,8 @@ test:
 `.env.example`：
 
 ```
-DATABASE_URL=postgres://ght:ght@localhost:5432/ghtrending
-DATABASE_URL_TEST=postgres://ght:ght@localhost:5432/ghtrending_test
+DATABASE_URL=postgres://ght:ght@localhost:5433/ghtrending
+DATABASE_URL_TEST=postgres://ght:ght@localhost:5433/ghtrending_test
 JWT_SECRET=change-me
 GITHUB_TOKEN=
 LANGUAGES=
@@ -526,7 +526,7 @@ mod tests {
 
     pub async fn test_pool() -> PgPool {
         let url = std::env::var("DATABASE_URL_TEST")
-            .unwrap_or_else(|_| "postgres://ght:ght@localhost:5432/ghtrending_test".into());
+            .unwrap_or_else(|_| "postgres://ght:ght@localhost:5433/ghtrending_test".into());
         let pool = db::pg_pool(&url).await.expect("test db unreachable; run `make db`");
         db::migrate(&pool).await.unwrap();
         sqlx::query("TRUNCATE repos, snapshots, users, invite_codes, refresh_tokens")
@@ -1709,7 +1709,7 @@ mod tests {
 
     async fn test_pool() -> PgPool {
         let url = std::env::var("DATABASE_URL_TEST")
-            .unwrap_or_else(|_| "postgres://ght:ght@localhost:5432/ghtrending_test".into());
+            .unwrap_or_else(|_| "postgres://ght:ght@localhost:5433/ghtrending_test".into());
         let pool = db::pg_pool(&url).await.expect("test db unreachable; run `make db`");
         db::migrate(&pool).await.unwrap();
         sqlx::query("TRUNCATE repos, snapshots, users, invite_codes, refresh_tokens")
@@ -2030,7 +2030,7 @@ mod tests {
 
     async fn test_pool() -> PgPool {
         let url = std::env::var("DATABASE_URL_TEST")
-            .unwrap_or_else(|_| "postgres://ght:ght@localhost:5432/ghtrending_test".into());
+            .unwrap_or_else(|_| "postgres://ght:ght@localhost:5433/ghtrending_test".into());
         let pool = db::pg_pool(&url).await.expect("test db unreachable; run `make db`");
         db::migrate(&pool).await.unwrap();
         sqlx::query("TRUNCATE repos, snapshots, users, invite_codes, refresh_tokens")
@@ -2282,7 +2282,7 @@ mod tests {
 
     async fn test_pool_with_user() -> (PgPool, i64) {
         let url = std::env::var("DATABASE_URL_TEST")
-            .unwrap_or_else(|_| "postgres://ght:ght@localhost:5432/ghtrending_test".into());
+            .unwrap_or_else(|_| "postgres://ght:ght@localhost:5433/ghtrending_test".into());
         let pool = db::pg_pool(&url).await.expect("test db unreachable; run `make db`");
         db::migrate(&pool).await.unwrap();
         sqlx::query("TRUNCATE repos, snapshots, users, invite_codes, refresh_tokens")
@@ -2740,7 +2740,7 @@ mod tests {
 
     async fn test_state() -> AppState {
         let url = std::env::var("DATABASE_URL_TEST")
-            .unwrap_or_else(|_| "postgres://ght:ght@localhost:5432/ghtrending_test".into());
+            .unwrap_or_else(|_| "postgres://ght:ght@localhost:5433/ghtrending_test".into());
         let pool = db::pg_pool(&url).await.expect("test db unreachable; run `make db`");
         db::migrate(&pool).await.unwrap();
         sqlx::query("TRUNCATE users, invite_codes, refresh_tokens")
@@ -3149,7 +3149,7 @@ mod tests {
 
     async fn test_state() -> AppState {
         let url = std::env::var("DATABASE_URL_TEST")
-            .unwrap_or_else(|_| "postgres://ght:ght@localhost:5432/ghtrending_test".into());
+            .unwrap_or_else(|_| "postgres://ght:ght@localhost:5433/ghtrending_test".into());
         let pool = db::pg_pool(&url).await.expect("test db unreachable; run `make db`");
         db::migrate(&pool).await.unwrap();
         sqlx::query("TRUNCATE repos, snapshots, users, invite_codes, refresh_tokens")
