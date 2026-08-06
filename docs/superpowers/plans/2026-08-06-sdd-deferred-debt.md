@@ -52,7 +52,7 @@ backend/
 **Interfaces:**
 - Produces: workspace dep `serial_test = "3"`；各 crate `serial_test = { workspace = true }`
 
-- [ ] **Step 1: 写入 workspace 依赖并改各 crate**
+- [x] **Step 1: 写入 workspace 依赖并改各 crate**
 
 `backend/Cargo.toml` 在 `[workspace.dependencies]` 末尾加：
 
@@ -68,7 +68,7 @@ serial_test = { workspace = true }
 
 （core / api / collector 各自 `Cargo.toml` 中原 `serial_test = "3"` 替换。）
 
-- [ ] **Step 2: 编译确认**
+- [x] **Step 2: 编译确认**
 
 Run:
 
@@ -80,7 +80,7 @@ cd backend && cargo check -p ght-core -p ght-api -p ght-collector
 
 Expected: 成功（无 unresolved serial_test）。
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add backend/Cargo.toml backend/crates/core/Cargo.toml backend/crates/api/Cargo.toml backend/crates/collector/Cargo.toml backend/Cargo.lock
@@ -97,7 +97,7 @@ git commit -m "chore: hoist serial_test to workspace dependencies"
 **Interfaces:**
 - Produces: `collect_time_parts(t: &str) -> Result<(u32, u32), ConfigError>` 无 unwrap
 
-- [ ] **Step 1: 写失败测试（边界）**
+- [x] **Step 1: 写失败测试（边界）**
 
 在 `config.rs` 的 `#[cfg(test)] mod tests` 追加：
 
@@ -121,12 +121,12 @@ fn collect_time_parts_rejects_invalid() {
 
 （保留已有 `collect_time_parts_splits_hh_mm`。）
 
-- [ ] **Step 2: 运行确认（实现仍用 unwrap 时也应 PASS；若已有实现则直接 PASS）**
+- [x] **Step 2: 运行确认（实现仍用 unwrap 时也应 PASS；若已有实现则直接 PASS）**
 
 Run: `cd backend && cargo test -p ght-core collect_time_parts -- --nocapture`  
 Expected: PASS（当前校验已挡非法串；下一步去掉 unwrap）
 
-- [ ] **Step 3: 实现无 unwrap 解析**
+- [x] **Step 3: 实现无 unwrap 解析**
 
 替换 `collect_time_parts` 为：
 
@@ -143,12 +143,12 @@ pub fn collect_time_parts(t: &str) -> Result<(u32, u32), ConfigError> {
 }
 ```
 
-- [ ] **Step 4: 再跑 config 测试**
+- [x] **Step 4: 再跑 config 测试**
 
 Run: `cd backend && cargo test -p ght-core config`  
 Expected: 全部 PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/crates/core/src/config.rs
@@ -166,7 +166,7 @@ git commit -m "fix(core): collect_time_parts without unwrap and boundary tests"
 - Consumes: `board_count`, `cleanup_expired_refresh_tokens`, 既有 `upsert_*` / `test_pool` 模式
 - Produces: 两个新 `#[tokio::test] #[serial]` 测试
 
-- [ ] **Step 1: 追加 board_count 测试**
+- [x] **Step 1: 追加 board_count 测试**
 
 在 `store.rs` tests 中追加（使用唯一 full_name 前缀 `bcnt/`）：
 
@@ -235,7 +235,7 @@ sqlx::query("DELETE FROM repos WHERE full_name LIKE 'bcnt/%'")
 
 然后 `assert_eq!(board_count(... TopStars), 2)` 且 `assert_eq!(board_count(... TopForks), 1)`。
 
-- [ ] **Step 2: 追加 cleanup_expired 测试**
+- [x] **Step 2: 追加 cleanup_expired 测试**
 
 ```rust
 #[tokio::test]
@@ -283,7 +283,7 @@ async fn cleanup_expired_refresh_tokens_only_deletes_expired() {
 
 注意：`test_pool` 当前可能不 TRUNCATE；本测试自行 TRUNCATE 用户相关表即可。
 
-- [ ] **Step 3: 运行 store 测试**
+- [x] **Step 3: 运行 store 测试**
 
 Run:
 
@@ -295,7 +295,7 @@ cd backend && cargo test -p ght-core store -- --nocapture
 
 Expected: 全部 PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add backend/crates/core/src/store.rs
@@ -312,7 +312,7 @@ git commit -m "test(core): cover board_count and cleanup_expired_refresh_tokens"
 **Interfaces:**
 - Produces: `search_top(..., lang: None, ...)` 发送 `q=is:public`
 
-- [ ] **Step 1: 更新/新增失败测试**
+- [x] **Step 1: 更新/新增失败测试**
 
 在 `paginates_until_empty_page` 或新增测试中，对 `lang=None` 断言 `query_param("q", "is:public")`：
 
@@ -337,12 +337,12 @@ async fn none_lang_uses_is_public_query() {
 }
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd backend && cargo test -p ght-collector none_lang_uses_is_public`  
 Expected: FAIL（当前空 q 不匹配 `is:public`）
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 在 `search_top` 内：
 
@@ -367,12 +367,12 @@ for page in 1..=pages {
 }
 ```
 
-- [ ] **Step 4: 运行 collector search 测试**
+- [x] **Step 4: 运行 collector search 测试**
 
 Run: `cd backend && cargo test -p ght-collector search`  
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/crates/collector/src/search.rs
@@ -389,7 +389,7 @@ git commit -m "fix(collector): search q=is:public for all-language queries"
 **Interfaces:**
 - Produces: `GRAPHQL_INTERVAL = 1500ms`；`build_watchers_query` 对含 `"` 的 target warn 并跳过；`fetch_watchers` 批间 sleep（最后一批不 sleep）
 
-- [ ] **Step 1: 写失败测试（quote 跳过）**
+- [x] **Step 1: 写失败测试（quote 跳过）**
 
 ```rust
 #[test]
@@ -407,7 +407,7 @@ fn build_skips_targets_with_quotes_in_names() {
 
 （现有实现已跳过 quote；本测试锁定行为。实现 step 补 warn。）
 
-- [ ] **Step 2: 实现 warn + sleep**
+- [x] **Step 2: 实现 warn + sleep**
 
 在 `build_watchers_query` 的 filter 分支改为显式循环或 `inspect`：
 
@@ -492,12 +492,12 @@ pub const GRAPHQL_INTERVAL: Duration = Duration::from_millis(1500);
 tokio::time::sleep(GRAPHQL_INTERVAL).await;
 ```
 
-- [ ] **Step 3: 运行 graphql 测试**
+- [x] **Step 3: 运行 graphql 测试**
 
 Run: `cd backend && cargo test -p ght-collector graphql`  
 Expected: PASS（`fetch_batches` 会多等约 1.5s）
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add backend/crates/collector/src/graphql.rs
@@ -515,7 +515,7 @@ git commit -m "fix(collector): graphql batch pacing and warn on quoted names"
 **Interfaces:**
 - Produces: `desc_sel = p.col-9`；缺 stars/forks 时 debug 日志后 skip；`fetch_trending(..., None)` 测 `/trending?since=daily`
 
-- [ ] **Step 1: 改 description 选择器并加 skip 日志**
+- [x] **Step 1: 改 description 选择器并加 skip 日志**
 
 ```rust
 let desc_sel = Selector::parse("p.col-9").unwrap();
@@ -531,7 +531,7 @@ let stars = match row.select(&stars_sel).next().and_then(|el| parse_count(...)) 
 // same for forks
 ```
 
-- [ ] **Step 2: 追加 fetch lang=None 测试**
+- [x] **Step 2: 追加 fetch lang=None 测试**
 
 ```rust
 #[tokio::test]
@@ -558,12 +558,12 @@ async fn fetch_all_languages_path() {
 
 （`header` matcher 需 `use wiremock::matchers::header`。）
 
-- [ ] **Step 3: 运行 trending 测试**
+- [x] **Step 3: 运行 trending 测试**
 
 Run: `cd backend && cargo test -p ght-collector trending`  
 Expected: PASS（fixture 仍解析 3 行）
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add backend/crates/collector/src/trending.rs
@@ -580,7 +580,7 @@ git commit -m "fix(collector): tighter trending desc selector and all-lang fetch
 **Interfaces:**
 - Consumes: `core_store::board_count` 或现有 `top_by_*` / `trending` len
 
-- [ ] **Step 1: 强化 idempotency 断言**
+- [x] **Step 1: 强化 idempotency 断言**
 
 在 `collect_once_writes_all_boards_and_is_idempotent` 第二次 collect 后替换/扩展为：
 
@@ -611,7 +611,7 @@ assert_eq!(
 
 需 `use ght_core::models::Board;`。
 
-- [ ] **Step 2: 运行 collect 集成测试**
+- [x] **Step 2: 运行 collect 集成测试**
 
 Run:
 
@@ -624,7 +624,7 @@ cd backend && cargo test -p ght-collector collect -- --nocapture
 
 Expected: PASS（较慢，含 sleep）
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add backend/crates/collector/src/collect.rs
@@ -641,7 +641,7 @@ git commit -m "test(collector): assert multi-board idempotency after recollect"
 **Interfaces:**
 - Consumes: `JobScheduler::shutdown(&mut self) -> Result<(), JobSchedulerError>`（tokio-cron-scheduler 0.10）
 
-- [ ] **Step 1: 实现 mut scheduler + shutdown**
+- [x] **Step 1: 实现 mut scheduler + shutdown**
 
 ```rust
 let mut scheduler = JobScheduler::new().await?;
@@ -654,12 +654,12 @@ if let Err(e) = scheduler.shutdown().await {
 Ok(())
 ```
 
-- [ ] **Step 2: 编译**
+- [x] **Step 2: 编译**
 
 Run: `cd backend && cargo build -p ght-collector`  
 Expected: 成功
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add backend/crates/collector/src/main.rs
@@ -672,7 +672,7 @@ git commit -m "fix(collector): graceful JobScheduler shutdown on ctrl-c"
 
 **Files:** 无新文件（若 sqlx 缓存变化则更新 `.sqlx/`）
 
-- [ ] **Step 1: Workspace 测试**
+- [x] **Step 1: Workspace 测试**
 
 ```bash
 export RUSTUP_TOOLCHAIN=stable
@@ -686,11 +686,11 @@ cd backend && cargo test --workspace
 
 Expected: 全部 crate PASS
 
-- [ ] **Step 2: 更新 SDD ledger（本地 .superpowers 可写 progress 段落）**
+- [x] **Step 2: 更新 SDD ledger（本地 .superpowers 可写 progress 段落）**
 
 在 progress 记：`Deferred debt plan complete (D1–D9)`。
 
-- [ ] **Step 3: 最终 commit（若有 sqlx 或文档）**
+- [x] **Step 3: 最终 commit（若有 sqlx 或文档）**
 
 ```bash
 git status
