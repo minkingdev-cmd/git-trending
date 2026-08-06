@@ -62,6 +62,11 @@ pub fn validate_collect_time(t: &str) -> Result<(), ConfigError> {
     }
 }
 
+pub fn collect_time_parts(t: &str) -> Result<(u32, u32), ConfigError> {
+    validate_collect_time(t)?;
+    Ok((t[..2].parse().unwrap(), t[3..].parse().unwrap()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,5 +102,11 @@ mod tests {
         assert!(validate_collect_time("9:00").is_err());
         assert!(validate_collect_time("09:60").is_err());
         assert!(validate_collect_time("0900").is_err());
+    }
+
+    #[test]
+    fn collect_time_parts_splits_hh_mm() {
+        assert_eq!(collect_time_parts("09:05").unwrap(), (9, 5));
+        assert!(collect_time_parts("09:60").is_err());
     }
 }

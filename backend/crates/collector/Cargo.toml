@@ -16,6 +16,8 @@ ght-core = { path = "../core" }
 reqwest = { workspace = true }
 scraper = { workspace = true }
 thiserror = { workspace = true }
+clap = { workspace = true }
+tokio-cron-scheduler = { workspace = true }
 
 [dev-dependencies]
 wiremock = { workspace = true }
