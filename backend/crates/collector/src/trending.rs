@@ -14,7 +14,7 @@ pub fn parse_trending_html(html: &str) -> Vec<TrendingRepo> {
     let doc = Html::parse_document(html);
     let row_sel = Selector::parse("article.Box-row").unwrap();
     let href_sel = Selector::parse("h2 a").unwrap();
-    let desc_sel = Selector::parse("p").unwrap();
+    let desc_sel = Selector::parse("p.col-9").unwrap();
     let lang_sel = Selector::parse("[itemprop=programmingLanguage]").unwrap();
     let stars_sel = Selector::parse(r#"a[href$="/stargazers"]"#).unwrap();
     let forks_sel = Selector::parse(r#"a[href$="/forks"]"#).unwrap();
@@ -24,8 +24,28 @@ pub fn parse_trending_html(html: &str) -> Vec<TrendingRepo> {
         .filter_map(|row| {
             let href = row.select(&href_sel).next()?.value().attr("href")?;
             let full_name = href.trim_start_matches('/').to_string();
-            let stars = parse_count(&row.select(&stars_sel).next()?.text().collect::<String>())?;
-            let forks = parse_count(&row.select(&forks_sel).next()?.text().collect::<String>())?;
+            let stars = match row
+                .select(&stars_sel)
+                .next()
+                .and_then(|el| parse_count(&el.text().collect::<String>()))
+            {
+                Some(s) => s,
+                None => {
+                    tracing::debug!(%full_name, "trending row missing stars; skipping");
+                    return None;
+                }
+            };
+            let forks = match row
+                .select(&forks_sel)
+                .next()
+                .and_then(|el| parse_count(&el.text().collect::<String>()))
+            {
+                Some(f) => f,
+                None => {
+                    tracing::debug!(%full_name, "trending row missing forks; skipping");
+                    return None;
+                }
+            };
             let stars_today = row
                 .select(&today_sel)
                 .next()
@@ -118,6 +138,31 @@ mod tests {
             .build()
             .unwrap();
         let repos = fetch_trending(&client, &server.uri(), Some("rust")).await.unwrap();
+        assert_eq!(repos.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn fetch_all_languages_path() {
+        use wiremock::matchers::{header, method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/trending"))
+            .and(query_param("since", "daily"))
+            .and(header("user-agent", "gh-trending-collector/0.1"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(include_str!("../tests/fixtures/trending.html")),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = reqwest::Client::builder()
+            .user_agent("gh-trending-collector/0.1")
+            .build()
+            .unwrap();
+        let repos = fetch_trending(&client, &server.uri(), None).await.unwrap();
         assert_eq!(repos.len(), 3);
     }
 }
