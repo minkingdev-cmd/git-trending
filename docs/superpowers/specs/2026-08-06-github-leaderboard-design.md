@@ -95,7 +95,7 @@ CREATE TABLE repos (
 
 CREATE TABLE snapshots (
     id             BIGSERIAL PRIMARY KEY,
-    repo_id        BIGINT NOT NULL REFERENCES repos(id),
+    repo_id        BIGINT NOT NULL,        -- 逻辑外键 → repos.id，不加 FK 约束
     snapshot_date  DATE NOT NULL,
     board          VARCHAR(20) NOT NULL,   -- 'trending_daily' | 'top_stars' | 'top_forks' | 'top_watchers'
     stars          INT NOT NULL,           -- 累计 star
@@ -105,12 +105,13 @@ CREATE TABLE snapshots (
     UNIQUE (repo_id, snapshot_date, board)
 );
 CREATE INDEX idx_snapshots_query ON snapshots (snapshot_date, board);
+CREATE INDEX idx_snapshots_repo ON snapshots (repo_id);
 
 CREATE TABLE users (
     id                BIGSERIAL PRIMARY KEY,
     username          VARCHAR(64) NOT NULL UNIQUE,
     password_hash     TEXT NOT NULL,              -- bcrypt
-    created_by_invite BIGINT REFERENCES invite_codes(id),
+    created_by_invite BIGINT,                     -- 逻辑外键 → invite_codes.id，仅追溯用
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -125,14 +126,21 @@ CREATE TABLE invite_codes (
 
 CREATE TABLE sessions (
     id              VARCHAR(64) PRIMARY KEY,      -- 不透明随机串，即 cookie 值
-    user_id         BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id         BIGINT NOT NULL,              -- 逻辑外键 → users.id，不加 FK 约束
     access_token    TEXT NOT NULL,                -- JWT
     access_expires  TIMESTAMPTZ NOT NULL,
     refresh_token   VARCHAR(128) NOT NULL UNIQUE,
     refresh_expires TIMESTAMPTZ NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX idx_sessions_user ON sessions (user_id);
 ```
+
+**约束策略：不建外键，参照完整性由程序保证。** 所有跨表引用（`snapshots.repo_id`、`users.created_by_invite`、`sessions.user_id`）只是逻辑外键——建索引加速查询，但不加 `REFERENCES` / `ON DELETE CASCADE`。具体保证方式：
+
+- **插入顺序**：collector 落库时在同一事务内先 upsert `repos`、拿到 `repo_id` 再写 `snapshots`，保证 `repo_id` 必然有效。注册流程同理（先有 user 才有 session）。
+- **级联删除改为程序处理**：没有 FK CASCADE。当前系统不存在删除用户的入口，`sessions` 由过期清理任务和登出逻辑主动删除；若未来加注销/删号功能，必须在程序里先删该 user 的 sessions。
+- **保留的约束**：仅 `NOT NULL`、`UNIQUE`、主键这类单表内的轻量约束保留（它们不产生跨表检查成本）；跨表的参照完整性全部交给应用层事务。
 
 **落库策略**：全部 upsert。repos 按 `full_name` 冲突更新；snapshots 按 `(repo_id, snapshot_date, board)` 冲突更新。upsert 幂等——同一天重复抓取无副作用，无需分布式锁。
 
