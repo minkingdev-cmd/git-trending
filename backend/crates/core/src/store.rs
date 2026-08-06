@@ -420,4 +420,107 @@ mod tests {
         }
         assert_eq!(latest_snapshot_date(&pool, Board::TopWatchers).await.unwrap(), Some(d2));
     }
+
+    #[tokio::test]
+    #[serial]
+    async fn board_count_counts_rows_for_board_and_date() {
+        let pool = test_pool().await;
+        // Unique date so board_count is not polluted by other serial tests' rows.
+        let date = NaiveDate::from_ymd_opt(2099, 1, 1).unwrap();
+        sqlx::query(
+            "DELETE FROM snapshots WHERE repo_id IN (SELECT id FROM repos WHERE full_name LIKE 'bcnt/%')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("DELETE FROM repos WHERE full_name LIKE 'bcnt/%'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM snapshots WHERE snapshot_date = $1")
+            .bind(date)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        for (name, stars) in [("bcnt/a", 10), ("bcnt/b", 20)] {
+            let id = upsert_repo(&pool, &repo(name, Some("Rust")), date).await.unwrap();
+            upsert_snapshot(
+                &pool,
+                id,
+                date,
+                Board::TopStars,
+                &SnapshotInput {
+                    stars,
+                    forks: 0,
+                    watchers: None,
+                    stars_today: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        // Another board must not count toward TopStars
+        let id = upsert_repo(&pool, &repo("bcnt/c", None), date).await.unwrap();
+        upsert_snapshot(
+            &pool,
+            id,
+            date,
+            Board::TopForks,
+            &SnapshotInput {
+                stars: 1,
+                forks: 9,
+                watchers: None,
+                stars_today: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(board_count(&pool, date, Board::TopStars).await.unwrap(), 2);
+        assert_eq!(board_count(&pool, date, Board::TopForks).await.unwrap(), 1);
+        let rows = top_by_stars(&pool, date, None, 1000).await.unwrap();
+        let mine = rows.iter().filter(|r| r.full_name.starts_with("bcnt/")).count();
+        assert_eq!(mine, 2);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn cleanup_expired_refresh_tokens_only_deletes_expired() {
+        let pool = test_pool().await;
+        sqlx::query("TRUNCATE users, invite_codes, refresh_tokens")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let uid: i64 = sqlx::query_scalar(
+            "INSERT INTO users (username, password_hash) VALUES ('cleanup_u', 'h') RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES ($1, 'h_old', now() - interval '1 day')",
+        )
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES ($1, 'h_new', now() + interval '1 day')",
+        )
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let deleted = cleanup_expired_refresh_tokens(&pool).await.unwrap();
+        assert_eq!(deleted, 1);
+        let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM refresh_tokens")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(left, 1);
+    }
 }
