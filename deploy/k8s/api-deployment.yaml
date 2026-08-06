@@ -31,7 +31,7 @@ spec:
               value: "true"
           readinessProbe:
             httpGet:
-              path: /api/health
+              path: /api/ready
               port: 8000
             initialDelaySeconds: 3
             periodSeconds: 10

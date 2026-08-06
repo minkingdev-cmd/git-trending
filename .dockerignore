@@ -1,0 +1,14 @@
+.git
+.github
+.remember
+.superpowers
+docs
+**/target
+frontend/node_modules
+frontend/dist
+**/.env
+**/*.local
+**/.DS_Store
+backend/target
+*.md
+!README.md

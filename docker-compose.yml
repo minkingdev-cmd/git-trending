@@ -49,10 +49,27 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    # Default: single run then exit (k8s CronJob style). Override for daemon:
-    # command: ["ght-collector"]
+    # Default: single run then exit (k8s CronJob style)
     command: ["ght-collector", "--once"]
     restart: "no"
+
+  # Long-running collector with daily schedule (optional)
+  collector-daemon:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: ["daemon"]
+    environment:
+      DATABASE_URL: postgres://ght:ght@postgres:5432/ghtrending
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      LANGUAGES: ${LANGUAGES:-}
+      COLLECT_TIME: ${COLLECT_TIME:-09:00}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["ght-collector"]
+    restart: unless-stopped
 
 volumes:
   pgdata:

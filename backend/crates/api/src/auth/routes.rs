@@ -63,20 +63,25 @@ fn issue_cookies(state: &AppState, user_id: i64, username: &str) -> Result<Vec<S
 }
 
 async fn register(State(state): State<AppState>, Json(req): Json<RegisterReq>) -> impl IntoResponse {
-    if req.username.is_empty() || req.username.len() > 64 || req.password.is_empty() || req.password.len() > 256 {
-        return unauthorized("invalid input").into_response();
+    if let Err(msg) = passwords::validate_credentials(&req.username, &req.password) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": msg })),
+        )
+            .into_response();
     }
+    let username = req.username.trim().to_string();
     let hash = match passwords::hash_password(&req.password) {
         Ok(h) => h,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    match users::register_with_invite(&state.pool, &req.username, &hash, &req.invite_code).await {
+    match users::register_with_invite(&state.pool, &username, &hash, &req.invite_code).await {
         Ok(user_id) => {
             let refresh = match refresh_store::create_refresh_token(&state.pool, user_id).await {
                 Ok(t) => t,
                 Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             };
-            let mut set_cookies = match issue_cookies(&state, user_id, &req.username) {
+            let mut set_cookies = match issue_cookies(&state, user_id, &username) {
                 Ok(c) => c,
                 Err(sc) => return sc.into_response(),
             };
@@ -84,13 +89,7 @@ async fn register(State(state): State<AppState>, Json(req): Json<RegisterReq>) -
                 &refresh,
                 state.settings.cookie_secure,
             ));
-            let mut resp = (
-                StatusCode::OK,
-                Json(AuthResp {
-                    username: req.username,
-                }),
-            )
-                .into_response();
+            let mut resp = (StatusCode::OK, Json(AuthResp { username })).into_response();
             for c in set_cookies {
                 if let Ok(val) = c.parse() {
                     resp.headers_mut().append("set-cookie", val);
@@ -103,7 +102,10 @@ async fn register(State(state): State<AppState>, Json(req): Json<RegisterReq>) -
 }
 
 async fn login(State(state): State<AppState>, Json(req): Json<LoginReq>) -> impl IntoResponse {
-    let user = match users::find_user_by_username(&state.pool, &req.username).await {
+    if req.username.trim().is_empty() || req.password.is_empty() {
+        return unauthorized("invalid credentials").into_response();
+    }
+    let user = match users::find_user_by_username(&state.pool, req.username.trim()).await {
         Ok(Some(u)) => u,
         _ => return unauthorized("invalid credentials").into_response(),
     };

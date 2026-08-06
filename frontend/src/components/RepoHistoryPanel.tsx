@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, UnauthorizedError } from "../api";
 import type { HistoryResponse } from "../types";
 import Sparkline from "./Sparkline";
 import type { BoardKind, Metric } from "./Controls";
@@ -9,6 +9,7 @@ interface Props {
   board: BoardKind;
   metric: Metric;
   onClose: () => void;
+  onUnauthorized?: () => void;
 }
 
 function historyBoard(board: BoardKind, metric: Metric): string {
@@ -29,7 +30,13 @@ function valueFromPoint(
   return p.stars;
 }
 
-export default function RepoHistoryPanel({ fullName, board, metric, onClose }: Props) {
+export default function RepoHistoryPanel({
+  fullName,
+  board,
+  metric,
+  onClose,
+  onUnauthorized,
+}: Props) {
   const [data, setData] = useState<HistoryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -42,9 +49,15 @@ export default function RepoHistoryPanel({ fullName, board, metric, onClose }: P
       `/api/repo/history?full_name=${encodeURIComponent(fullName)}&board=${b}&days=90`,
     )
       .then(setData)
-      .catch((e) => setError(e instanceof Error ? e.message : "load failed"))
+      .catch((e) => {
+        if (e instanceof UnauthorizedError) {
+          onUnauthorized?.();
+          return;
+        }
+        setError(e instanceof Error ? e.message : "load failed");
+      })
       .finally(() => setLoading(false));
-  }, [fullName, board, metric]);
+  }, [fullName, board, metric, onUnauthorized]);
 
   const points =
     data?.points.map((p) => ({

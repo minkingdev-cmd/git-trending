@@ -48,8 +48,9 @@ export default function AuthCard({ onLoggedIn }: { onLoggedIn: (username: string
         />
         <input
           className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
-          placeholder="password"
+          placeholder="password (min 8 chars)"
           type="password"
+          minLength={8}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           required

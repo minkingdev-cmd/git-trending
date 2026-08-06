@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import AuthCard from "./components/AuthCard";
 import Leaderboard from "./components/Leaderboard";
 import AdminPanel from "./components/AdminPanel";
@@ -16,6 +16,11 @@ export default function App() {
   const [auth, setAuth] = useState<AuthState>({ kind: "loading" });
   const [view, setView] = useState<View>("board");
 
+  const forceLogout = useCallback(() => {
+    setAuth({ kind: "anon" });
+    setView("board");
+  }, []);
+
   useEffect(() => {
     api<MeResponse>("/api/auth/me")
       .then((me) =>
@@ -30,11 +35,15 @@ export default function App() {
 
   useEffect(() => {
     if (auth.kind !== "user") return;
-    return startRefreshTimer(() => setAuth({ kind: "anon" }));
-  }, [auth.kind]);
+    return startRefreshTimer(forceLogout);
+  }, [auth.kind, forceLogout]);
 
   if (auth.kind === "loading") {
-    return <div className="p-8 text-neutral-500">Loading…</div>;
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-neutral-950 text-neutral-500">
+        Loading…
+      </div>
+    );
   }
   if (auth.kind === "anon") {
     return (
@@ -57,7 +66,12 @@ export default function App() {
   }
 
   if (view === "admin" && auth.isAdmin) {
-    return <AdminPanel onBack={() => setView("board")} />;
+    return (
+      <AdminPanel
+        onBack={() => setView("board")}
+        onUnauthorized={forceLogout}
+      />
+    );
   }
 
   return (
@@ -65,10 +79,13 @@ export default function App() {
       username={auth.username}
       isAdmin={auth.isAdmin}
       onOpenAdmin={() => setView("admin")}
+      onUnauthorized={forceLogout}
       onLogout={async () => {
-        await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
-        setAuth({ kind: "anon" });
-        setView("board");
+        try {
+          await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+        } finally {
+          forceLogout();
+        }
       }}
     />
   );

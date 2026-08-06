@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, postAuth } from "../api";
+import { api, postAuth, UnauthorizedError } from "../api";
 import type { InviteItem, UserItem } from "../types";
 
 interface Props {
   onBack: () => void;
+  onUnauthorized?: () => void;
 }
 
-export default function AdminPanel({ onBack }: Props) {
+export default function AdminPanel({ onBack, onUnauthorized }: Props) {
   const [invites, setInvites] = useState<InviteItem[]>([]);
   const [users, setUsers] = useState<UserItem[]>([]);
   const [uses, setUses] = useState(1);
@@ -24,9 +25,13 @@ export default function AdminPanel({ onBack }: Props) {
       setInvites(inv);
       setUsers(usr);
     } catch (e) {
+      if (e instanceof UnauthorizedError) {
+        onUnauthorized?.();
+        return;
+      }
       setError(e instanceof Error ? e.message : "load failed");
     }
-  }, []);
+  }, [onUnauthorized]);
 
   useEffect(() => {
     void load();

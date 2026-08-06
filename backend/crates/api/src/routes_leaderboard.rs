@@ -67,6 +67,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/languages", axum::routing::get(languages))
         .route("/api/meta", axum::routing::get(meta))
         .route("/api/health", axum::routing::get(health))
+        .route("/api/ready", axum::routing::get(ready))
 }
 
 async fn top(
@@ -222,6 +223,21 @@ async fn meta(State(state): State<AppState>, _auth: RequireAuth) -> impl IntoRes
 
 async fn health() -> impl IntoResponse {
     Json(serde_json::json!({ "status": "ok" }))
+}
+
+/// Readiness: process up + database reachable (for k8s readinessProbe).
+async fn ready(State(state): State<AppState>) -> impl IntoResponse {
+    match sqlx::query_scalar::<_, i32>("SELECT 1")
+        .fetch_one(&state.pool)
+        .await
+    {
+        Ok(_) => (StatusCode::OK, Json(serde_json::json!({ "status": "ready" }))).into_response(),
+        Err(e) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "status": "not_ready", "error": e.to_string() })),
+        )
+            .into_response(),
+    }
 }
 
 #[cfg(test)]
@@ -435,5 +451,9 @@ mod tests {
 
         let (status, _) = get(state.clone(), "/api/health", None).await;
         assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = get(state.clone(), "/api/ready", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("ready"));
     }
 }

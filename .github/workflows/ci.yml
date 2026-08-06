@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  SQLX_OFFLINE: "true"
+  DATABASE_URL: postgres://ght:ght@localhost:5432/ghtrending
+  DATABASE_URL_TEST: postgres://ght:ght@localhost:5432/ghtrending_test
+  DATABASE_URL_TEST_API: postgres://ght:ght@localhost:5432/ghtrending_test_api
+  DATABASE_URL_TEST_COLLECTOR: postgres://ght:ght@localhost:5432/ghtrending_test_collector
+  JWT_SECRET: ci-test-secret
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ght
+          POSTGRES_PASSWORD: ght
+          POSTGRES_DB: ghtrending
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ght"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Create test databases
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+          PGPASSWORD=ght psql -h localhost -U ght -d ghtrending -c "CREATE DATABASE ghtrending_test;"
+          PGPASSWORD=ght psql -h localhost -U ght -d ghtrending -c "CREATE DATABASE ghtrending_test_api;"
+          PGPASSWORD=ght psql -h localhost -U ght -d ghtrending -c "CREATE DATABASE ghtrending_test_collector;"
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+      - name: Test
+        working-directory: backend
+        run: cargo test --workspace
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build

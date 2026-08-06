@@ -345,8 +345,15 @@ make test      # cargo test（需测试库）+ npm test
 | 测试 | cargo test + wiremock（HTTP mock）+ axum Router 直驱 |
 | 依赖管理 | cargo（后端）+ npm（前端） |
 
-## 14. 未来演进（不在本期范围）
+## 14. 未来演进（已实现）
 
-- 部署：多阶段 Dockerfile（builder + scratch/distroless 运行镜像，静态二进制）+ k8s 清单（collector 切 CronJob `--once` 模式）
-- 历史趋势：数据已按天存档，加查询接口与前端图表即可
-- 管理后台：邀请码/用户的 Web 管理界面（当前 CLI 足够）
+- ~~部署~~：多阶段 Dockerfile + compose stack/daemon + k8s Deployment/CronJob/Ingress 示例
+- ~~历史趋势~~：`date` 筛选、`/api/repo/history`、前端 sparkline
+- ~~管理后台~~：bootstrap 管理员 + Web 邀请码/用户管理
+
+## 15. 生产加固（已实现）
+
+- GitHub Actions CI（backend + frontend）
+- `/api/ready` DB 就绪探针 + 安全响应头
+- 注册密码/用户名校验（密码 ≥8，用户名字符集）
+- 前端 401 统一回登录、加载骨架与错误重试

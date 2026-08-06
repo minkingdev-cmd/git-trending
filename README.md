@@ -54,8 +54,9 @@ make stack-down
 2. 复制 `secret.example.yaml` → 填真实密钥 → apply
 3. `kubectl apply -f deploy/k8s/api-deployment.yaml`
 4. `kubectl apply -f deploy/k8s/collector-cronjob.yaml`
+5. （可选）`ingress.example.yaml` 配置域名与 TLS
 
-Collector 使用 `--once`，适合 CronJob；API 为 Deployment。
+探针：`/api/health`（存活）、`/api/ready`（DB 就绪）。
 
 ## 常用命令
 
@@ -64,9 +65,16 @@ make db / db-down
 make collect / dev-all
 make api / admin / web
 make test
-make docker-build / stack / stack-down
+make docker-build / stack / stack-daemon / stack-down
 make sqlx-prepare
 ```
+
+## CI
+
+GitHub Actions（`.github/workflows/ci.yml`）在 push/PR 时运行：
+
+- backend：Postgres service + `cargo test --workspace`（`SQLX_OFFLINE=true`）
+- frontend：`npm test` + `npm run build`
 
 ## 环境变量
 

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import Controls, { type BoardKind, type Metric } from "./Controls";
 import LeaderboardTable from "./LeaderboardTable";
 import RepoHistoryPanel from "./RepoHistoryPanel";
-import { api } from "../api";
+import { api, UnauthorizedError } from "../api";
 import type { LanguageOption, LeaderboardResponse, MetaResponse } from "../types";
 
 interface Props {
@@ -10,6 +10,7 @@ interface Props {
   isAdmin: boolean;
   onLogout: () => void;
   onOpenAdmin?: () => void;
+  onUnauthorized?: () => void;
 }
 
 function readUrl(): { board: BoardKind; metric: Metric; lang: string; date: string } {
@@ -26,7 +27,13 @@ function readUrl(): { board: BoardKind; metric: Metric; lang: string; date: stri
   };
 }
 
-export default function Leaderboard({ username, isAdmin, onLogout, onOpenAdmin }: Props) {
+export default function Leaderboard({
+  username,
+  isAdmin,
+  onLogout,
+  onOpenAdmin,
+  onUnauthorized,
+}: Props) {
   const initial = readUrl();
   const [board, setBoard] = useState<BoardKind>(initial.board);
   const [metric, setMetric] = useState<Metric>(initial.metric);
@@ -51,11 +58,15 @@ export default function Leaderboard({ username, isAdmin, onLogout, onOpenAdmin }
   useEffect(() => {
     api<LanguageOption[]>("/api/languages")
       .then(setLanguages)
-      .catch(() => {});
+      .catch((e) => {
+        if (e instanceof UnauthorizedError) onUnauthorized?.();
+      });
     api<MetaResponse>("/api/meta")
       .then((m) => setDates(m.dates ?? []))
-      .catch(() => {});
-  }, []);
+      .catch((e) => {
+        if (e instanceof UnauthorizedError) onUnauthorized?.();
+      });
+  }, [onUnauthorized]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -69,11 +80,15 @@ export default function Leaderboard({ username, isAdmin, onLogout, onOpenAdmin }
     try {
       setData(await api<LeaderboardResponse>(path));
     } catch (e) {
+      if (e instanceof UnauthorizedError) {
+        onUnauthorized?.();
+        return;
+      }
       setError(e instanceof Error ? e.message : "load failed");
     } finally {
       setLoading(false);
     }
-  }, [board, metric, lang, date]);
+  }, [board, metric, lang, date, onUnauthorized]);
 
   useEffect(() => {
     void load();
@@ -115,8 +130,30 @@ export default function Leaderboard({ username, isAdmin, onLogout, onOpenAdmin }
           onDate={setDate}
         />
 
-        {loading && <p className="py-8 text-center text-neutral-500">加载中…</p>}
-        {error && <p className="py-8 text-center text-red-400">{error}</p>}
+        {loading && (
+          <div className="space-y-2 py-4" aria-busy="true" aria-label="加载中">
+            {[1, 2, 3, 4, 5].map((i) => (
+              <div
+                key={i}
+                className="h-10 animate-pulse rounded bg-neutral-900"
+                style={{ opacity: 1 - i * 0.12 }}
+              />
+            ))}
+          </div>
+        )}
+        {error && (
+          <div className="py-8 text-center space-y-2">
+            <p className="text-red-400">{error}</p>
+            <p className="text-sm text-neutral-500">今日抓取可能未完成，可稍后重试或检查 collector。</p>
+            <button
+              type="button"
+              onClick={() => void load()}
+              className="text-sm text-emerald-400 hover:underline"
+            >
+              重试
+            </button>
+          </div>
+        )}
         {!loading && !error && data && (
           <LeaderboardTable
             items={data.items}
@@ -133,6 +170,7 @@ export default function Leaderboard({ username, isAdmin, onLogout, onOpenAdmin }
           board={board}
           metric={metric}
           onClose={() => setHistoryRepo(null)}
+          onUnauthorized={onUnauthorized}
         />
       )}
     </div>

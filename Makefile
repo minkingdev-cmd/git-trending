@@ -38,5 +38,9 @@ stack:
 	docker compose --profile stack up -d --build postgres api
 	docker compose --profile stack run --rm collector || true
 
+# Long-running collector (daily COLLECT_TIME) + api
+stack-daemon:
+	docker compose --profile stack --profile daemon up -d --build postgres api collector-daemon
+
 stack-down:
-	docker compose --profile stack down
+	docker compose --profile stack --profile daemon down
