@@ -255,10 +255,29 @@ mod tests {
         assert_eq!(watch[0].watchers, Some(77));
         assert_eq!(core_store::trending(&pool, today, None, 100).await.unwrap().len(), 3);
 
-        // 幂等：重跑行数不变
+        // 幂等：重跑行数不变，四 board 均断言
         let report2 = collector.collect_once().await;
-        assert!(report2.failed == 0);
+        assert_eq!(report2.failed, 0);
         assert_eq!(core_store::top_by_stars(&pool, today, None, 100).await.unwrap().len(), 1);
+        assert_eq!(core_store::top_by_forks(&pool, today, None, 100).await.unwrap().len(), 1);
+        assert_eq!(core_store::top_by_watchers(&pool, today, None, 100).await.unwrap().len(), 1);
+        assert_eq!(core_store::trending(&pool, today, None, 100).await.unwrap().len(), 3);
+        assert_eq!(
+            core_store::board_count(&pool, today, Board::TopStars).await.unwrap(),
+            1
+        );
+        assert_eq!(
+            core_store::board_count(&pool, today, Board::TopForks).await.unwrap(),
+            1
+        );
+        assert_eq!(
+            core_store::board_count(&pool, today, Board::TopWatchers).await.unwrap(),
+            1
+        );
+        assert_eq!(
+            core_store::board_count(&pool, today, Board::TrendingDaily).await.unwrap(),
+            3
+        );
     }
 
     #[tokio::test]
