@@ -1,0 +1,330 @@
+# GH Trending 设计文档
+
+日期：2026-08-06
+状态：已确认（brainstorming 定稿）
+
+## 1. 目标
+
+一个需要登录访问的 GitHub 数据排行站点：
+
+- 每天抓取 GitHub 数据，生成三个榜单：
+  - **趋势榜**：当日新增 star（来源：github.com/trending 页面官方口径，每语言 ~25 条）
+  - **总榜**：按累计 star / fork / watch 数排名，各取 top 100
+- 所有榜单可按 repo 主语言筛选
+- 点击 repo 名称在新标签页打开对应 GitHub 页面
+- 账号自主注册，但必须持有邀请码
+
+**非目标（YAGNI）**：历史趋势图、管理后台、部署方案（先本地跑通，部署后补，但设计上预留容器化接口）。
+
+## 2. 数据口径（关键决策）
+
+| 榜单 | 排名依据 | 条数 | 数据来源 |
+|---|---|---|---|
+| 趋势榜 | 今日新增 star（stars today） | 每语言 ~25（trending 页面上限） | 爬取 `github.com/trending/{lang}?since=daily` |
+| 总榜 star | 累计 star 总数 | 每语言 100 | GitHub Search API `sort=stars` |
+| 总榜 fork | 累计 fork 总数 | 每语言 100 | GitHub Search API `sort=forks` |
+| 总榜 watch | 累计 subscriber 数 | 每语言 100 | Search API 取 star top500 候选池 + GraphQL 批量查 `watchers.totalCount`，排序取前 100 |
+
+已确认的口径取舍：
+
+- **趋势榜无 fork/watch 口径**：trending 页面不提供这两类增量数据。
+- **趋势榜条数不满 100**：官方 trending 每语言只有 ~25 条，接受此上限，不做差分补齐。
+- **watch 榜候选池假设**：watch top100 必然落在 star top500 内（watch 与 star 强相关），README 需注明此口径限制。
+- **语言覆盖**：全语言 + 可配置热门语言列表（默认 ~20 个：TypeScript、JavaScript、Python、Java、Go、Rust、C、C++、C#、PHP、Ruby、Swift、Kotlin、Shell 等，`LANGUAGES` 环境变量配置）。
+- **快照存档**：每日抓取结果按天落库。UI 只展示最新快照，但历史数据保留，未来可加历史趋势功能而无需回补数据。
+- **rank 不落库**：同一 repo 会出现在多个语言维度的抓取结果中，排名数字随维度变化；只存数值，查询时过滤语言后用窗口函数重算排名。
+
+## 3. 架构
+
+A+C 混合方案：一个 Python 包、两个独立进程入口；collector 内置调度器常驻运行，同时支持单次模式。
+
+```
+gh-trending/
+├── backend/
+│   ├── pyproject.toml                 # uv 管理依赖
+│   ├── ghtrending/
+│   │   ├── models.py                  # SQLAlchemy 2.x 模型（两进程共享）
+│   │   ├── db.py                      # 引擎/会话工厂
+│   │   ├── settings.py                # pydantic-settings，配置全走环境变量
+│   │   ├── collector/                 # ── 进程 1：抓取 worker ──
+│   │   │   ├── __main__.py            #   默认常驻（每日定时）；--once 跑一次退出
+│   │   │   ├── trending.py            #   trending 页面爬虫（selectolax 解析）
+│   │   │   ├── search.py              #   Search API 客户端（总榜 star/fork）
+│   │   │   └── graphql.py             #   GraphQL 批量查询（watch 榜）
+│   │   └── api/                       # ── 进程 2：Web 服务（BFF）──
+│   │       ├── main.py                #   FastAPI app + 静态文件挂载
+│   │       ├── routes.py              #   业务路由 /api/leaderboard/* 等
+│   │       ├── bff/
+│   │       │   ├── session.py         #   sessions 表 CRUD、token 轮换、懒刷新
+│   │       │   └── deps.py            #   require_session 依赖
+│   │       └── auth/
+│   │           ├── tokens.py          #   JWT 签发/校验、refresh token 生成
+│   │           ├── passwords.py       #   bcrypt
+│   │           └── routes.py          #   /api/auth/*
+│   └── tests/
+├── frontend/                          # React + Vite + Tailwind
+├── docker-compose.yml                 # PG + collector + api
+└── Makefile
+```
+
+**关键决策**：
+
+- **一个包两个入口**：collector 写入与 API 读取共享同一套 SQLAlchemy 模型，schema 变更只改一处。
+- **collector 双模式**：默认常驻 + 内置调度（每日 `COLLECT_TIME` 触发）；`--once` 跑一次以退出码报告成败——将来上 k8s CronJob 只改部署参数，代码不动。
+- **API 纯只读**：永不调用 GitHub，只查 PG 最新快照。抓取失败不影响 API 服务旧数据，两个故障域隔离。
+
+## 4. 数据模型（PostgreSQL）
+
+```sql
+CREATE TABLE repos (
+    id            BIGSERIAL PRIMARY KEY,
+    full_name     VARCHAR(512) NOT NULL UNIQUE,   -- owner/name
+    owner         VARCHAR(255) NOT NULL,
+    name          VARCHAR(255) NOT NULL,
+    html_url      TEXT NOT NULL,
+    language      VARCHAR(64),                    -- repo 自身主语言，可为空
+    description   TEXT,
+    first_seen    DATE NOT NULL
+);
+
+CREATE TABLE snapshots (
+    id             BIGSERIAL PRIMARY KEY,
+    repo_id        BIGINT NOT NULL REFERENCES repos(id),
+    snapshot_date  DATE NOT NULL,
+    board          VARCHAR(20) NOT NULL,   -- 'trending_daily' | 'top_stars' | 'top_forks' | 'top_watchers'
+    stars          INT NOT NULL,           -- 累计 star
+    forks          INT NOT NULL,           -- 累计 fork
+    watchers       INT,                    -- 累计 subscriber（仅 top_watchers 写入）
+    stars_today    INT,                    -- 今日新增 star（仅 trending_daily 写入）
+    UNIQUE (repo_id, snapshot_date, board)
+);
+CREATE INDEX idx_snapshots_query ON snapshots (snapshot_date, board);
+
+CREATE TABLE users (
+    id                BIGSERIAL PRIMARY KEY,
+    username          VARCHAR(64) NOT NULL UNIQUE,
+    password_hash     TEXT NOT NULL,              -- bcrypt
+    created_by_invite BIGINT REFERENCES invite_codes(id),
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE invite_codes (
+    id          BIGSERIAL PRIMARY KEY,
+    code        VARCHAR(32) NOT NULL UNIQUE,      -- secrets.token_urlsafe(12)
+    max_uses    INT NOT NULL DEFAULT 1,
+    used_count  INT NOT NULL DEFAULT 0,
+    revoked     BOOLEAN NOT NULL DEFAULT false,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE sessions (
+    id              VARCHAR(64) PRIMARY KEY,      -- 不透明随机串，即 cookie 值
+    user_id         BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    access_token    TEXT NOT NULL,                -- JWT
+    access_expires  TIMESTAMPTZ NOT NULL,
+    refresh_token   VARCHAR(128) NOT NULL UNIQUE,
+    refresh_expires TIMESTAMPTZ NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+**落库策略**：全部 upsert。repos 按 `full_name` 冲突更新；snapshots 按 `(repo_id, snapshot_date, board)` 冲突更新。upsert 幂等——同一天重复抓取无副作用，无需分布式锁。
+
+**容量估算**：约 6,500 行快照/天（总榜 3 指标 × ~2000 去重行 + 趋势榜 525），约 350 MB/年，十年 3 GB 量级，无需分区/归档。
+
+## 5. Collector 抓取流程
+
+一次完整运行约 5 分钟：
+
+```
+1. 总榜 star/fork（search.py）
+   for lang in [全语言] + LANGUAGES:
+       for metric in [stars, forks]:
+           GET /search/repositories?q=language:{lang}&sort={metric}&per_page=100
+   → 42 请求；认证限速 30 req/min，请求间隔 ~1.5s
+
+2. 总榜 watch（search.py + graphql.py）
+   for lang in [全语言] + LANGUAGES:
+       Search API 按 stars 取 top500（翻 5 页）
+       GraphQL 批量查 watchers.totalCount（每请求 ~50 个 repo，alias 打包）
+       排序取 top100
+   → ~210 GraphQL 请求；需要 GITHUB_TOKEN（缺失时跳过 watch 榜，其余照跑）
+
+3. 趋势榜（trending.py）
+   for lang in [全语言] + LANGUAGES:
+       GET https://github.com/trending/{lang}?since=daily，selectolax 解析
+   → 21 请求；间隔 ~2s，设置 User-Agent
+
+4. 落库
+   upsert repos → upsert snapshots（单事务按语言分批提交）
+
+5. 清理
+   DELETE FROM sessions WHERE refresh_expires < now()
+```
+
+**错误处理**：
+
+- 单语言/单请求失败（超时、限流、页面改版解析失败）→ 记日志、跳过，不中断整天任务；全部失败才退出非零码
+- Search API 403 rate limit → 指数退避重试 3 次后跳过该语言
+- GraphQL 401（无 token）→ 跳过 watch 榜并记 warning
+- 无 GITHUB_TOKEN 时 collector 仍可运行，仅降级失去 watch 榜
+
+**调度**：常驻模式用 APScheduler `BlockingScheduler` + cron 触发器，每日 `COLLECT_TIME`（默认 09:00）执行。
+
+## 6. API 设计（FastAPI）
+
+除 `/api/health` 与 `/api/auth/*` 外，全部路由要求登录（`require_session` 依赖）。
+
+```
+GET  /api/health                    存活检查
+GET  /api/meta                      最新快照日期、各榜条数（需登录）
+GET  /api/languages                 语言下拉选项：repos 表 distinct + 计数（需登录）
+GET  /api/leaderboard/top           总榜 ?metric=stars|forks|watchers&language=&date=（需登录）
+GET  /api/leaderboard/trending      趋势榜 ?language=&date=（需登录）
+POST /api/auth/register             {username, password, invite_code}
+POST /api/auth/login                {username, password}
+POST /api/auth/logout
+POST /api/auth/refresh              轮换 token 对
+GET  /api/auth/me                   登录态探测（200/401）
+```
+
+- `date` 可选，缺省为最新快照日；UI 暂不使用，为历史功能预留。
+- rank 用 `ROW_NUMBER() OVER (ORDER BY ...)` 在语言过滤后重算。
+- 未登录访问受保护路由返回 401，前端统一切回登录界面。
+
+响应示例（`/api/leaderboard/top`）：
+
+```json
+{
+  "date": "2026-08-06",
+  "board": "top_stars",
+  "language": "Python",
+  "items": [
+    {
+      "rank": 1,
+      "full_name": "tensorflow/tensorflow",
+      "html_url": "https://github.com/tensorflow/tensorflow",
+      "description": "An Open Source Machine Learning Framework for Everyone",
+      "language": "Python",
+      "stars": 190000,
+      "forks": 75000
+    }
+  ]
+}
+```
+
+## 7. 认证系统（BFF + 双 token）
+
+浏览器永远接触不到任何 token，只持有不透明 `session_id` cookie；access/refresh token 由 BFF 层存于 sessions 表并管理生命周期。
+
+| 凭证 | 生命周期 | 存放 |
+|---|---|---|
+| `session_id` | 跟随会话 | httpOnly cookie |
+| `access_token`（JWT） | 15 分钟 | sessions 表 |
+| `refresh_token`（`secrets.token_urlsafe(32)`） | 30 天 | sessions 表 |
+
+**流程**：
+
+1. **登录/注册**：校验密码/邀请码（`used_count < max_uses AND NOT revoked`，注册成功 `used_count + 1`，同一事务）→ 生成 token 对写 sessions → Set-Cookie
+2. **BFF 懒刷新（兜底）**：`require_session` 依赖中，access token 剩余有效期 < 2 分钟即用 refresh token 换新对，再放行业务请求
+3. **前端定时刷新（主动）**：每 10 分钟调 `POST /api/auth/refresh`；页面隐藏（`visibilitychange`）时暂停
+4. **Refresh rotation**：每次刷新签发新 refresh token，旧值立即失效；已失效的旧 token 再次出现视为被盗，删除整个会话
+5. **登出**：删除 sessions 行 + 清 cookie
+
+**Cookie 属性**：`HttpOnly; SameSite=Lax; Path=/`，生产环境加 `Secure`。SameSite=Lax 使跨站 POST 不携带 cookie，无需额外 CSRF token。
+
+**首个账号**：CLI 创建（bootstrap，不依赖邀请码）。
+
+## 8. 管理 CLI
+
+```
+uv run ghtrending-admin create-user                # 首个账号（bootstrap，无需邀请码）
+uv run ghtrending-admin invite create [--uses N]   # 生成邀请码（默认 1 次），打印到终端
+uv run ghtrending-admin invite list                # 查看邀请码及使用情况
+uv run ghtrending-admin invite revoke <code>       # 作废邀请码
+```
+
+系统不区分用户角色（无管理员权限体系）；`create-user` 只是解决 bootstrap 问题——第一个账号无法通过注册流程（需要邀请码，而邀请码需要账号才能管理）产生。
+
+## 9. 前端（React + Vite + Tailwind）
+
+单页应用，不引入 UI 组件库、不引入 react-router。
+
+**布局**：
+
+```
+┌───────────────────────────────────────────────────┐
+│  GH Trending        数据截至 2026-08-06   user ▾  │
+├───────────────────────────────────────────────────┤
+│  [ 趋势榜 ] [ 总榜 ]                               │
+│  指标: (●) Star ( ) Fork ( ) Watch   ← 仅总榜      │
+│  语言: [全部语言 ▾]                                │
+├───────────────────────────────────────────────────┤
+│ # │ Repo               │ Lang │ ★     │ Fork │ …  │
+└───────────────────────────────────────────────────┘
+```
+
+- 未登录时整页替换为登录/注册卡片（同组件表单切换）；`App` 启动先 `GET /api/auth/me` 决定渲染哪个
+- 趋势榜多「★ today」列，无 Fork/Watch 指标切换
+- Repo 名称：`<a href={html_url} target="_blank" rel="noopener noreferrer">`
+- 筛选状态（board/metric/lang）同步到 URL query，刷新不丢、可分享；用原生 `URLSearchParams`
+- 数字显示 `Intl.NumberFormat('en', {notation: 'compact'})`（190K）
+- 三态处理：loading 骨架、error（含「今日抓取可能未完成」提示）、empty
+- `api.ts` 统一 fetch 封装：401 → 切登录界面；10 分钟定时器调 refresh
+- 开发：Vite dev server 代理 `/api` → `localhost:8000`
+- 生产预留：构建产物 `frontend/dist` 由 FastAPI `StaticFiles` 挂载，单端口同源部署，无 CORS
+
+## 10. 配置（环境变量）
+
+| 变量 | 必填 | 说明 |
+|---|---|---|
+| `DATABASE_URL` | ✅ | `postgresql+psycopg://...` |
+| `JWT_SECRET` | ✅ | JWT 签名密钥 |
+| `GITHUB_TOKEN` | watch 榜必填 | 缺失时 watch 榜降级跳过 |
+| `LANGUAGES` | ❌ | 逗号分隔，默认内置 ~20 热门语言 |
+| `COLLECT_TIME` | ❌ | 常驻模式每日执行时间，默认 `09:00` |
+
+## 11. 测试策略（pytest）
+
+| 层 | 内容 | 手段 |
+|---|---|---|
+| 解析器单测（最脆弱一环） | trending HTML → 结构化数据 | 真实页面 fixture，断言条数与字段 |
+| API 响应解析单测 | Search / GraphQL JSON → 模型 | JSON fixture + httpx MockTransport |
+| API 端点测试 | 榜单过滤、rank 重算、auth 全流程 | TestClient + 测试库 seed |
+| 幂等性测试 | 同日重复抓取结果一致 | fixture 数据 upsert 两遍断言行数 |
+| 降级测试 | 无 token 跳 watch 榜、单语言失败不中断 | mock 401/403/超时 |
+| 安全测试 | 未登录 401、refresh rotation、旧 token 杀会话 | TestClient |
+
+真实网络请求全部 mock，不依赖 GitHub 可用性。
+
+## 12. 本地运行
+
+```
+make db        # docker compose up -d postgres
+make collect   # uv run ghtrending-collector --once   （首次手动）
+make api       # uv run uvicorn ghtrending.api.main:app --reload
+make web       # cd frontend && npm run dev
+make dev-all   # collector 常驻模式（每日 COLLECT_TIME 自动跑）
+make admin     # ghtrending-admin create-user（首个账号 bootstrap）
+```
+
+docker-compose.yml 包含 PG + collector + api 三件套，`docker compose up` 即完整系统（部署形态后补时的基础）。
+
+## 13. 技术栈汇总
+
+| 层 | 选型 |
+|---|---|
+| 后端框架 | FastAPI + uvicorn |
+| ORM / DB | SQLAlchemy 2.x + PostgreSQL（psycopg） |
+| 抓取 | httpx（REST/GraphQL）+ selectolax（HTML 解析） |
+| 调度 | APScheduler（collector 常驻模式） |
+| 认证 | JWT（access）+ 随机串（refresh）+ bcrypt + PG session 存储 |
+| 前端 | React + Vite + Tailwind（无组件库） |
+| 测试 | pytest + httpx MockTransport |
+| 依赖管理 | uv（后端）+ npm（前端） |
+
+## 14. 未来演进（不在本期范围）
+
+- 部署：Dockerfile + k8s 清单（collector 切 CronJob `--once` 模式）
+- 历史趋势：数据已按天存档，加查询接口与前端图表即可
+- 管理后台：邀请码/用户的 Web 管理界面（当前 CLI 足够）
