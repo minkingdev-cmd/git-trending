@@ -36,32 +36,37 @@
 
 ## 3. 架构
 
-A+C 混合方案：一个 Python 包、两个独立进程入口；collector 内置调度器常驻运行，同时支持单次模式。
+A+C 混合方案：一个 cargo workspace、三个独立二进制（collector / api / admin）；collector 内置调度器常驻运行，同时支持单次模式。
 
 ```
 gh-trending/
 ├── backend/
-│   ├── pyproject.toml                 # uv 管理依赖
-│   ├── ghtrending/
-│   │   ├── models.py                  # SQLAlchemy 2.x 模型（两进程共享）
-│   │   ├── db.py                      # 引擎/会话工厂
-│   │   ├── settings.py                # pydantic-settings，配置全走环境变量
-│   │   ├── collector/                 # ── 进程 1：抓取 worker ──
-│   │   │   ├── __main__.py            #   默认常驻（每日定时）；--once 跑一次退出
-│   │   │   ├── trending.py            #   trending 页面爬虫（selectolax 解析）
-│   │   │   ├── search.py              #   Search API 客户端（总榜 star/fork）
-│   │   │   └── graphql.py             #   GraphQL 批量查询（watch 榜）
-│   │   └── api/                       # ── 进程 2：Web 服务（BFF）──
-│   │       ├── main.py                #   FastAPI app + 静态文件挂载
-│   │       ├── routes.py              #   业务路由 /api/leaderboard/* 等
-│   │       ├── bff/
-│   │       │   ├── session.py         #   sessions 表 CRUD、token 轮换、懒刷新
-│   │       │   └── deps.py            #   require_session 依赖
-│   │       └── auth/
-│   │           ├── tokens.py          #   JWT 签发/校验、refresh token 生成
-│   │           ├── passwords.py       #   bcrypt
-│   │           └── routes.py          #   /api/auth/*
-│   └── tests/
+│   ├── Cargo.toml                     # workspace
+│   ├── migrations/                    # SQLx 迁移文件（两个长驻二进制启动时自动执行，幂等）
+│   ├── crates/
+│   │   ├── core/                      # ght-core lib（三个二进制共享）
+│   │   │   └── src/
+│   │   │       ├── config.rs          #   环境变量配置（serde + env）
+│   │   │       ├── db.rs              #   sqlx::PgPool 工厂
+│   │   │       └── models.rs          #   结构体 + 查询（query! 编译期检查）
+│   │   ├── collector/                 # ── 二进制 1：抓取 worker ──
+│   │   │   └── src/
+│   │   │       ├── main.rs            #   clap：默认常驻（每日定时）；--once 跑一次退出
+│   │   │       ├── trending.rs        #   trending 页面爬虫（scraper 解析）
+│   │   │       ├── search.rs          #   Search API 客户端（reqwest）
+│   │   │       └── graphql.rs         #   GraphQL 批量查询（watch 榜）
+│   │   ├── api/                       # ── 二进制 2：Web 服务（BFF，axum）──
+│   │   │   └── src/
+│   │   │       ├── main.rs            #   axum app + 静态文件（tower-http）
+│   │   │       ├── routes.rs          #   业务路由 /api/leaderboard/* 等
+│   │   │       ├── bff/
+│   │   │       │   ├── session.rs     #   sessions 表 CRUD、token 轮换、懒刷新
+│   │   │       │   └── extract.rs     #   RequireSession axum extractor
+│   │   │       └── auth/
+│   │   │           ├── tokens.rs      #   JWT 签发/校验（jsonwebtoken）、refresh 生成（rand）
+│   │   │           ├── passwords.rs   #   bcrypt crate
+│   │   │           └── routes.rs      #   /api/auth/*
+│   │   └── admin/                     # ── 二进制 3：管理 CLI（clap subcommands）──
 ├── frontend/                          # React + Vite + Tailwind
 ├── docker-compose.yml                 # PG + collector + api
 └── Makefile
@@ -69,9 +74,10 @@ gh-trending/
 
 **关键决策**：
 
-- **一个包两个入口**：collector 写入与 API 读取共享同一套 SQLAlchemy 模型，schema 变更只改一处。
-- **collector 双模式**：默认常驻 + 内置调度（每日 `COLLECT_TIME` 触发）；`--once` 跑一次以退出码报告成败——将来上 k8s CronJob 只改部署参数，代码不动。
+- **一个 workspace 多个二进制**：collector 写入与 API 读取共享 ght-core 的模型与查询，schema 变更只改一处。编译产物是三个独立的静态二进制，无运行时依赖。
+- **collector 双模式**：默认常驻 + 内置调度（tokio-cron-scheduler，每日 `COLLECT_TIME` 触发）；`--once` 跑一次以退出码报告成败——将来上 k8s CronJob 只改部署参数，代码不动。
 - **API 纯只读**：永不调用 GitHub，只查 PG 最新快照。抓取失败不影响 API 服务旧数据，两个故障域隔离。
+- **SQLx 编译期查询检查**：`query!` 宏在编译时校验 SQL 与 schema 一致，需要编译环境可连数据库；CI/无库环境用 `SQLX_OFFLINE=true` + 提交到仓库的 `.sqlx/` 查询缓存。
 
 ## 4. 数据模型（PostgreSQL）
 
@@ -110,7 +116,7 @@ CREATE TABLE users (
 
 CREATE TABLE invite_codes (
     id          BIGSERIAL PRIMARY KEY,
-    code        VARCHAR(32) NOT NULL UNIQUE,      -- secrets.token_urlsafe(12)
+    code        VARCHAR(32) NOT NULL UNIQUE,      -- rand 随机生成，base64url 编码
     max_uses    INT NOT NULL DEFAULT 1,
     used_count  INT NOT NULL DEFAULT 0,
     revoked     BOOLEAN NOT NULL DEFAULT false,
@@ -137,22 +143,22 @@ CREATE TABLE sessions (
 一次完整运行约 5 分钟：
 
 ```
-1. 总榜 star/fork（search.py）
+1. 总榜 star/fork（search.rs）
    for lang in [全语言] + LANGUAGES:
        for metric in [stars, forks]:
            GET /search/repositories?q=language:{lang}&sort={metric}&per_page=100
    → 42 请求；认证限速 30 req/min，请求间隔 ~1.5s
 
-2. 总榜 watch（search.py + graphql.py）
+2. 总榜 watch（search.rs + graphql.rs）
    for lang in [全语言] + LANGUAGES:
        Search API 按 stars 取 top500（翻 5 页）
        GraphQL 批量查 watchers.totalCount（每请求 ~50 个 repo，alias 打包）
        排序取 top100
    → ~210 GraphQL 请求；需要 GITHUB_TOKEN（缺失时跳过 watch 榜，其余照跑）
 
-3. 趋势榜（trending.py）
+3. 趋势榜（trending.rs）
    for lang in [全语言] + LANGUAGES:
-       GET https://github.com/trending/{lang}?since=daily，selectolax 解析
+       GET https://github.com/trending/{lang}?since=daily，scraper 解析
    → 21 请求；间隔 ~2s，设置 User-Agent
 
 4. 落库
@@ -169,11 +175,11 @@ CREATE TABLE sessions (
 - GraphQL 401（无 token）→ 跳过 watch 榜并记 warning
 - 无 GITHUB_TOKEN 时 collector 仍可运行，仅降级失去 watch 榜
 
-**调度**：常驻模式用 APScheduler `BlockingScheduler` + cron 触发器，每日 `COLLECT_TIME`（默认 09:00）执行。
+**调度**：常驻模式用 tokio-cron-scheduler，每日 `COLLECT_TIME`（默认 09:00）执行。抓取各语言循环内可并发请求（GitHub 侧限速仍按上述间隔控制），落库按语言分批提交。
 
-## 6. API 设计（FastAPI）
+## 6. API 设计（axum）
 
-除 `/api/health` 与 `/api/auth/*` 外，全部路由要求登录（`require_session` 依赖）。
+除 `/api/health` 与 `/api/auth/*` 外，全部路由要求登录（`RequireSession` extractor）。
 
 ```
 GET  /api/health                    存活检查
@@ -221,12 +227,12 @@ GET  /api/auth/me                   登录态探测（200/401）
 |---|---|---|
 | `session_id` | 跟随会话 | httpOnly cookie |
 | `access_token`（JWT） | 15 分钟 | sessions 表 |
-| `refresh_token`（`secrets.token_urlsafe(32)`） | 30 天 | sessions 表 |
+| `refresh_token`（rand 随机 32 字节，base64url） | 30 天 | sessions 表 |
 
 **流程**：
 
 1. **登录/注册**：校验密码/邀请码（`used_count < max_uses AND NOT revoked`，注册成功 `used_count + 1`，同一事务）→ 生成 token 对写 sessions → Set-Cookie
-2. **BFF 懒刷新（兜底）**：`require_session` 依赖中，access token 剩余有效期 < 2 分钟即用 refresh token 换新对，再放行业务请求
+2. **BFF 懒刷新（兜底）**：`RequireSession` extractor 中，access token 剩余有效期 < 2 分钟即用 refresh token 换新对，再放行业务请求
 3. **前端定时刷新（主动）**：每 10 分钟调 `POST /api/auth/refresh`；页面隐藏（`visibilitychange`）时暂停
 4. **Refresh rotation**：每次刷新签发新 refresh token，旧值立即失效；已失效的旧 token 再次出现视为被盗，删除整个会话
 5. **登出**：删除 sessions 行 + 清 cookie
@@ -238,10 +244,10 @@ GET  /api/auth/me                   登录态探测（200/401）
 ## 8. 管理 CLI
 
 ```
-uv run ghtrending-admin create-user                # 首个账号（bootstrap，无需邀请码）
-uv run ghtrending-admin invite create [--uses N]   # 生成邀请码（默认 1 次），打印到终端
-uv run ghtrending-admin invite list                # 查看邀请码及使用情况
-uv run ghtrending-admin invite revoke <code>       # 作废邀请码
+ght-admin create-user                              # 首个账号（bootstrap，无需邀请码）
+ght-admin invite create [--uses N]                 # 生成邀请码（默认 1 次），打印到终端
+ght-admin invite list                              # 查看邀请码及使用情况
+ght-admin invite revoke <code>                     # 作废邀请码
 ```
 
 系统不区分用户角色（无管理员权限体系）；`create-user` 只是解决 bootstrap 问题——第一个账号无法通过注册流程（需要邀请码，而邀请码需要账号才能管理）产生。
@@ -272,59 +278,67 @@ uv run ghtrending-admin invite revoke <code>       # 作废邀请码
 - 三态处理：loading 骨架、error（含「今日抓取可能未完成」提示）、empty
 - `api.ts` 统一 fetch 封装：401 → 切登录界面；10 分钟定时器调 refresh
 - 开发：Vite dev server 代理 `/api` → `localhost:8000`
-- 生产预留：构建产物 `frontend/dist` 由 FastAPI `StaticFiles` 挂载，单端口同源部署，无 CORS
+- 生产预留：构建产物 `frontend/dist` 由 axum 通过 tower-http `ServeDir` 挂载，单端口同源部署，无 CORS
 
 ## 10. 配置（环境变量）
 
 | 变量 | 必填 | 说明 |
 |---|---|---|
-| `DATABASE_URL` | ✅ | `postgresql+psycopg://...` |
+| `DATABASE_URL` | ✅ | `postgres://user:pass@host:5432/ghtrending` |
 | `JWT_SECRET` | ✅ | JWT 签名密钥 |
 | `GITHUB_TOKEN` | watch 榜必填 | 缺失时 watch 榜降级跳过 |
 | `LANGUAGES` | ❌ | 逗号分隔，默认内置 ~20 热门语言 |
 | `COLLECT_TIME` | ❌ | 常驻模式每日执行时间，默认 `09:00` |
 
-## 11. 测试策略（pytest）
+## 11. 测试策略（cargo test）
 
 | 层 | 内容 | 手段 |
 |---|---|---|
-| 解析器单测（最脆弱一环） | trending HTML → 结构化数据 | 真实页面 fixture，断言条数与字段 |
-| API 响应解析单测 | Search / GraphQL JSON → 模型 | JSON fixture + httpx MockTransport |
-| API 端点测试 | 榜单过滤、rank 重算、auth 全流程 | TestClient + 测试库 seed |
+| 解析器单测（最脆弱一环） | trending HTML → 结构化数据 | 真实页面 fixture（`include_str!`），断言条数与字段 |
+| API 响应解析单测 | Search / GraphQL JSON → 模型 | JSON fixture + serde 反序列化测试 |
+| API 端点测试 | 榜单过滤、rank 重算、auth 全流程 | axum Router 直接驱动 + 测试库 seed |
 | 幂等性测试 | 同日重复抓取结果一致 | fixture 数据 upsert 两遍断言行数 |
-| 降级测试 | 无 token 跳 watch 榜、单语言失败不中断 | mock 401/403/超时 |
-| 安全测试 | 未登录 401、refresh rotation、旧 token 杀会话 | TestClient |
+| 降级测试 | 无 token 跳 watch 榜、单语言失败不中断 | wiremock 返回 401/403/超时 |
+| 安全测试 | 未登录 401、refresh rotation、旧 token 杀会话 | axum Router 直接驱动 |
 
-真实网络请求全部 mock，不依赖 GitHub 可用性。
+真实网络请求用 wiremock 全部 mock，不依赖 GitHub 可用性。数据库测试使用独立测试库（`DATABASE_URL` 指向测试 schema，前后清理）。
 
 ## 12. 本地运行
 
 ```
-make db        # docker compose up -d postgres
-make collect   # uv run ghtrending-collector --once   （首次手动）
-make api       # uv run uvicorn ghtrending.api.main:app --reload
-make web       # cd frontend && npm run dev
+make db        # docker compose up -d postgres（并等待就绪）
+make collect   # cargo run -p ght-collector -- --once   （首次手动）
+make api       # cargo run -p ght-api                   （axum，:8000）
+make web       # cd frontend && npm run dev             （Vite，代理 /api）
 make dev-all   # collector 常驻模式（每日 COLLECT_TIME 自动跑）
-make admin     # ghtrending-admin create-user（首个账号 bootstrap）
+make admin     # cargo run -p ght-admin -- create-user  （首个账号 bootstrap）
+make test      # cargo test（需测试库）+ npm test
 ```
 
-docker-compose.yml 包含 PG + collector + api 三件套，`docker compose up` 即完整系统（部署形态后补时的基础）。
+docker-compose.yml 包含 PG + collector + api 三件套，`docker compose up` 即完整系统（部署形态后补时的基础）。迁移文件在两个长驻二进制启动时通过 `sqlx::migrate!()` 自动执行（幂等）。
+
+注意：SQLx `query!` 宏需要编译期可连数据库。本地先 `make db` 再 `cargo build`；无库环境（如 CI 构建镜像）设置 `SQLX_OFFLINE=true` 使用提交到仓库的 `.sqlx/` 查询缓存。
 
 ## 13. 技术栈汇总
 
 | 层 | 选型 |
 |---|---|
-| 后端框架 | FastAPI + uvicorn |
-| ORM / DB | SQLAlchemy 2.x + PostgreSQL（psycopg） |
-| 抓取 | httpx（REST/GraphQL）+ selectolax（HTML 解析） |
-| 调度 | APScheduler（collector 常驻模式） |
-| 认证 | JWT（access）+ 随机串（refresh）+ bcrypt + PG session 存储 |
+| 语言 | Rust（2021 edition） |
+| Web 框架 | axum + tokio + tower-http（静态文件/日志） |
+| DB 访问 | SQLx（异步 + 编译期查询检查）+ PostgreSQL，迁移用 sqlx migrate |
+| HTTP 客户端 | reqwest（rustls-tls，json feature） |
+| HTML 解析 | scraper（CSS 选择器） |
+| 调度 | tokio-cron-scheduler（collector 常驻模式） |
+| 认证 | jsonwebtoken（access JWT）+ rand（refresh）+ bcrypt + PG session 存储 |
+| CLI | clap（admin 子命令） |
+| 序列化/配置 | serde / serde_json / config（环境变量） |
+| 日志 | tracing + tracing-subscriber |
 | 前端 | React + Vite + Tailwind（无组件库） |
-| 测试 | pytest + httpx MockTransport |
-| 依赖管理 | uv（后端）+ npm（前端） |
+| 测试 | cargo test + wiremock（HTTP mock）+ axum Router 直驱 |
+| 依赖管理 | cargo（后端）+ npm（前端） |
 
 ## 14. 未来演进（不在本期范围）
 
-- 部署：Dockerfile + k8s 清单（collector 切 CronJob `--once` 模式）
+- 部署：多阶段 Dockerfile（builder + scratch/distroless 运行镜像，静态二进制）+ k8s 清单（collector 切 CronJob `--once` 模式）
 - 历史趋势：数据已按天存档，加查询接口与前端图表即可
 - 管理后台：邀请码/用户的 Web 管理界面（当前 CLI 足够）
