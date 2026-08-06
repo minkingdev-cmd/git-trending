@@ -1,1 +1,3 @@
+mod trending;
+
 fn main() {}
