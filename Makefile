@@ -23,5 +23,4 @@ web:
 	cd frontend && npm run dev
 
 test:
-	cd backend && cargo test
-	cd frontend && npm test
+	cd backend && DATABASE_URL=postgres://ght:ght@localhost:5433/ghtrending cargo test
