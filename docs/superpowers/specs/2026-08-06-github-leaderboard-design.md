@@ -55,16 +55,15 @@ gh-trending/
 │   │   │       ├── trending.rs        #   trending 页面爬虫（scraper 解析）
 │   │   │       ├── search.rs          #   Search API 客户端（reqwest）
 │   │   │       └── graphql.rs         #   GraphQL 批量查询（watch 榜）
-│   │   ├── api/                       # ── 二进制 2：Web 服务（BFF，axum）──
+│   │   ├── api/                       # ── 二进制 2：Web 服务（axum，无状态 JWT 鉴权）──
 │   │   │   └── src/
 │   │   │       ├── main.rs            #   axum app + 静态文件（tower-http）
 │   │   │       ├── routes.rs          #   业务路由 /api/leaderboard/* 等
-│   │   │       ├── bff/
-│   │   │       │   ├── session.rs     #   sessions 表 CRUD、token 轮换、懒刷新
-│   │   │       │   └── extract.rs     #   RequireSession axum extractor
 │   │   │       └── auth/
-│   │   │           ├── tokens.rs      #   JWT 签发/校验（jsonwebtoken）、refresh 生成（rand）
+│   │   │           ├── tokens.rs      #   JWT 签发/校验（jsonwebtoken）、refresh 生成（rand）+ SHA-256
 │   │   │           ├── passwords.rs   #   bcrypt crate
+│   │   │           ├── refresh.rs     #   refresh_tokens 表 CRUD、轮换、被盗检测（低频路径）
+│   │   │           ├── extract.rs     #   RequireAuth extractor：仅验签，零 DB
 │   │   │           └── routes.rs      #   /api/auth/*
 │   │   └── admin/                     # ── 二进制 3：管理 CLI（clap subcommands）──
 ├── frontend/                          # React + Vite + Tailwind
@@ -124,22 +123,23 @@ CREATE TABLE invite_codes (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE sessions (
-    id              VARCHAR(64) PRIMARY KEY,      -- 不透明随机串，即 cookie 值
-    user_id         BIGINT NOT NULL,              -- 逻辑外键 → users.id，不加 FK 约束
-    access_token    TEXT NOT NULL,                -- JWT
-    access_expires  TIMESTAMPTZ NOT NULL,
-    refresh_token   VARCHAR(128) NOT NULL UNIQUE,
-    refresh_expires TIMESTAMPTZ NOT NULL,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+-- access token 不进表：它是无状态 JWT，请求路径只验签不查库。
+-- 本表只为 refresh token 的轮换/吊销/被盗检测服务（低频：仅登录、登出、刷新时访问）。
+CREATE TABLE refresh_tokens (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     BIGINT NOT NULL,                  -- 逻辑外键 → users.id，不加 FK 约束
+    token_hash  VARCHAR(64) NOT NULL UNIQUE,      -- refresh token 的 SHA-256 hex（不落明文）
+    expires_at  TIMESTAMPTZ NOT NULL,
+    used_at     TIMESTAMPTZ,                      -- 轮换时置为当前时间；已用 token 再次出现 = 被盗
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_sessions_user ON sessions (user_id);
+CREATE INDEX idx_refresh_tokens_user ON refresh_tokens (user_id);
 ```
 
-**约束策略：不建外键，参照完整性由程序保证。** 所有跨表引用（`snapshots.repo_id`、`users.created_by_invite`、`sessions.user_id`）只是逻辑外键——建索引加速查询，但不加 `REFERENCES` / `ON DELETE CASCADE`。具体保证方式：
+**约束策略：不建外键，参照完整性由程序保证。** 所有跨表引用（`snapshots.repo_id`、`users.created_by_invite`、`refresh_tokens.user_id`）只是逻辑外键——建索引加速查询，但不加 `REFERENCES` / `ON DELETE CASCADE`。具体保证方式：
 
-- **插入顺序**：collector 落库时在同一事务内先 upsert `repos`、拿到 `repo_id` 再写 `snapshots`，保证 `repo_id` 必然有效。注册流程同理（先有 user 才有 session）。
-- **级联删除改为程序处理**：没有 FK CASCADE。当前系统不存在删除用户的入口，`sessions` 由过期清理任务和登出逻辑主动删除；若未来加注销/删号功能，必须在程序里先删该 user 的 sessions。
+- **插入顺序**：collector 落库时在同一事务内先 upsert `repos`、拿到 `repo_id` 再写 `snapshots`，保证 `repo_id` 必然有效。注册流程同理（先有 user 才有 refresh_token 记录）。
+- **级联删除改为程序处理**：没有 FK CASCADE。当前系统不存在删除用户的入口，`refresh_tokens` 由过期清理任务和登出逻辑主动删除；若未来加注销/删号功能，必须在程序里先删该 user 的 refresh_tokens。
 - **保留的约束**：仅 `NOT NULL`、`UNIQUE`、主键这类单表内的轻量约束保留（它们不产生跨表检查成本）；跨表的参照完整性全部交给应用层事务。
 
 **落库策略**：全部 upsert。repos 按 `full_name` 冲突更新；snapshots 按 `(repo_id, snapshot_date, board)` 冲突更新。upsert 幂等——同一天重复抓取无副作用，无需分布式锁。
@@ -173,7 +173,7 @@ CREATE INDEX idx_sessions_user ON sessions (user_id);
    upsert repos → upsert snapshots（单事务按语言分批提交）
 
 5. 清理
-   DELETE FROM sessions WHERE refresh_expires < now()
+   DELETE FROM refresh_tokens WHERE expires_at < now()
 ```
 
 **错误处理**：
@@ -187,7 +187,7 @@ CREATE INDEX idx_sessions_user ON sessions (user_id);
 
 ## 6. API 设计（axum）
 
-除 `/api/health` 与 `/api/auth/*` 外，全部路由要求登录（`RequireSession` extractor）。
+除 `/api/health` 与 `/api/auth/*` 外，全部路由要求登录（`RequireAuth` extractor，仅 JWT 验签、不查库）。
 
 ```
 GET  /api/health                    存活检查
@@ -198,8 +198,8 @@ GET  /api/leaderboard/trending      趋势榜 ?language=&date=（需登录）
 POST /api/auth/register             {username, password, invite_code}
 POST /api/auth/login                {username, password}
 POST /api/auth/logout
-POST /api/auth/refresh              轮换 token 对
-GET  /api/auth/me                   登录态探测（200/401）
+POST /api/auth/refresh              轮换 refresh token + 签发新 access JWT（refresh cookie 自动携带）
+GET  /api/auth/me                   登录态探测（200/401），仅验签
 ```
 
 - `date` 可选，缺省为最新快照日；UI 暂不使用，为历史功能预留。
@@ -227,25 +227,25 @@ GET  /api/auth/me                   登录态探测（200/401）
 }
 ```
 
-## 7. 认证系统（BFF + 双 token）
+## 7. 认证系统（无状态 access + 可轮换 refresh，请求路径零查库）
 
-浏览器永远接触不到任何 token，只持有不透明 `session_id` cookie；access/refresh token 由 BFF 层存于 sessions 表并管理生命周期。
+核心原则：**access token 是无状态 JWT，请求路径只做验签 + 查 exp，不访问数据库**；DB 只在低频路径（登录、登出、每 10 分钟一次的刷新）被访问。两个 token 都放在 httpOnly cookie 里，前端 JS 永远接触不到 token 明文。
 
-| 凭证 | 生命周期 | 存放 |
-|---|---|---|
-| `session_id` | 跟随会话 | httpOnly cookie |
-| `access_token`（JWT） | 15 分钟 | sessions 表 |
-| `refresh_token`（rand 随机 32 字节，base64url） | 30 天 | sessions 表 |
+| 凭证 | 生命周期 | 存放 | DB 访问频率 |
+|---|---|---|---|
+| `access_token`（JWT，含 user_id/username/exp） | 15 分钟 | httpOnly cookie `access_token` | **零**（仅验签） |
+| `refresh_token`（rand 随机 32 字节，base64url） | 30 天 | httpOnly cookie `refresh_token`（`Path=/api/auth`）+ refresh_tokens 表（存 SHA-256） | 仅登录/登出/刷新 |
 
 **流程**：
 
-1. **登录/注册**：校验密码/邀请码（`used_count < max_uses AND NOT revoked`，注册成功 `used_count + 1`，同一事务）→ 生成 token 对写 sessions → Set-Cookie
-2. **BFF 懒刷新（兜底）**：`RequireSession` extractor 中，access token 剩余有效期 < 2 分钟即用 refresh token 换新对，再放行业务请求
-3. **前端定时刷新（主动）**：每 10 分钟调 `POST /api/auth/refresh`；页面隐藏（`visibilitychange`）时暂停
-4. **Refresh rotation**：每次刷新签发新 refresh token，旧值立即失效；已失效的旧 token 再次出现视为被盗，删除整个会话
-5. **登出**：删除 sessions 行 + 清 cookie
+1. **登录/注册**：校验密码/邀请码（`used_count < max_uses AND NOT revoked`，注册成功 `used_count + 1`，同一事务）→ 签发 JWT access + 随机 refresh → refresh 的 SHA-256 写入 `refresh_tokens` → Set-Cookie 两个
+2. **业务请求鉴权**：`RequireAuth` extractor 读 `access_token` cookie → 用 `JWT_SECRET` 验签 + 校验 exp（**无 DB 查询**）→ 注入 user_id/username；任何失败返回 401
+3. **前端定时刷新（主动续期）**：每 10 分钟调 `POST /api/auth/refresh`（refresh cookie 因 `Path=/api/auth` 自动携带）→ 后端轮换 → 重设两个 cookie；页面隐藏（`visibilitychange`）时暂停
+4. **轮换 + 被盗检测**：refresh 按 `token_hash` 查行——`used_at` 已置位（旧 token 重放）= 被盗 → 删除该 user 全部 refresh token 并 401；已过期 → 401；有效 → 置 `used_at`、插入新行、返回新 token 对
+5. **401 兜底重试**：前端 `api.ts` 拦截 401 → 静默调一次 refresh → 成功则重放原请求，失败则切登录界面（定时刷新之外的第二道保险）
+6. **登出**：删除对应 refresh_tokens 行 + 清两个 cookie
 
-**Cookie 属性**：`HttpOnly; SameSite=Lax; Path=/`，生产环境加 `Secure`。SameSite=Lax 使跨站 POST 不携带 cookie，无需额外 CSRF token。
+**Cookie 属性**：均为 `HttpOnly; SameSite=Lax`，生产环境加 `Secure`；`refresh_token` 额外设 `Path=/api/auth` 缩小发送面。SameSite=Lax 使跨站 POST 不携带 cookie，无需额外 CSRF token。
 
 **首个账号**：CLI 创建（bootstrap，不依赖邀请码）。
 
@@ -284,7 +284,7 @@ ght-admin invite revoke <code>                     # 作废邀请码
 - 筛选状态（board/metric/lang）同步到 URL query，刷新不丢、可分享；用原生 `URLSearchParams`
 - 数字显示 `Intl.NumberFormat('en', {notation: 'compact'})`（190K）
 - 三态处理：loading 骨架、error（含「今日抓取可能未完成」提示）、empty
-- `api.ts` 统一 fetch 封装：401 → 切登录界面；10 分钟定时器调 refresh
+- `api.ts` 统一 fetch 封装：401 → 静默调一次 refresh 并重放原请求，再失败才切登录界面；10 分钟定时器调 `POST /api/auth/refresh`（页面隐藏时暂停）。前端全程不接触 token（cookie 自动携带）
 - 开发：Vite dev server 代理 `/api` → `localhost:8000`
 - 生产预留：构建产物 `frontend/dist` 由 axum 通过 tower-http `ServeDir` 挂载，单端口同源部署，无 CORS
 
@@ -307,7 +307,7 @@ ght-admin invite revoke <code>                     # 作废邀请码
 | API 端点测试 | 榜单过滤、rank 重算、auth 全流程 | axum Router 直接驱动 + 测试库 seed |
 | 幂等性测试 | 同日重复抓取结果一致 | fixture 数据 upsert 两遍断言行数 |
 | 降级测试 | 无 token 跳 watch 榜、单语言失败不中断 | wiremock 返回 401/403/超时 |
-| 安全测试 | 未登录 401、refresh rotation、旧 token 杀会话 | axum Router 直接驱动 |
+| 安全测试 | 未登录 401、JWT 过期/篡改 401、refresh 轮换、已轮换 token 重放 → 该用户全部 token 被删 | axum Router 直接驱动 |
 
 真实网络请求用 wiremock 全部 mock，不依赖 GitHub 可用性。数据库测试使用独立测试库（`DATABASE_URL` 指向测试 schema，前后清理）。
 
@@ -337,7 +337,7 @@ docker-compose.yml 包含 PG + collector + api 三件套，`docker compose up` �
 | HTTP 客户端 | reqwest（rustls-tls，json feature） |
 | HTML 解析 | scraper（CSS 选择器） |
 | 调度 | tokio-cron-scheduler（collector 常驻模式） |
-| 认证 | jsonwebtoken（access JWT）+ rand（refresh）+ bcrypt + PG session 存储 |
+| 认证 | jsonwebtoken（access JWT，无状态）+ rand + sha2（refresh token 生成与哈希）+ bcrypt + refresh_tokens 表 |
 | CLI | clap（admin 子命令） |
 | 序列化/配置 | serde / serde_json / config（环境变量） |
 | 日志 | tracing + tracing-subscriber |
