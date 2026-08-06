@@ -23,4 +23,4 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 tower = { workspace = true }
-serial_test = "3"
+serial_test = { workspace = true }

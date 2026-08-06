@@ -22,4 +22,4 @@ tokio-cron-scheduler = { workspace = true }
 [dev-dependencies]
 wiremock = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-serial_test = "3"
+serial_test = { workspace = true }
