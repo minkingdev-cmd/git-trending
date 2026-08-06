@@ -64,7 +64,13 @@ pub fn validate_collect_time(t: &str) -> Result<(), ConfigError> {
 
 pub fn collect_time_parts(t: &str) -> Result<(u32, u32), ConfigError> {
     validate_collect_time(t)?;
-    Ok((t[..2].parse().unwrap(), t[3..].parse().unwrap()))
+    let hour: u32 = t[..2]
+        .parse()
+        .map_err(|_| ConfigError::BadCollectTime(t.to_string()))?;
+    let minute: u32 = t[3..]
+        .parse()
+        .map_err(|_| ConfigError::BadCollectTime(t.to_string()))?;
+    Ok((hour, minute))
 }
 
 #[cfg(test)]
@@ -108,5 +114,21 @@ mod tests {
     fn collect_time_parts_splits_hh_mm() {
         assert_eq!(collect_time_parts("09:05").unwrap(), (9, 5));
         assert!(collect_time_parts("09:60").is_err());
+    }
+
+    #[test]
+    fn collect_time_parts_boundary_ok() {
+        assert_eq!(collect_time_parts("00:00").unwrap(), (0, 0));
+        assert_eq!(collect_time_parts("23:59").unwrap(), (23, 59));
+    }
+
+    #[test]
+    fn collect_time_parts_rejects_invalid() {
+        for bad in ["24:00", "12:60", "", "9:00", "0900"] {
+            assert!(
+                collect_time_parts(bad).is_err(),
+                "expected err for {bad:?}"
+            );
+        }
     }
 }
