@@ -52,17 +52,19 @@ pub async fn search_top(
     let mut out = Vec::new();
     let q = match lang {
         Some(l) => format!("language:{l}"),
-        None => String::new(),
+        None => "is:public".to_string(),
     };
+    let per_page_s = per_page.to_string();
     for page in 1..=pages {
+        let page_s = page.to_string();
         let mut req = client
             .get(format!("{base}/search/repositories"))
             .header("Accept", "application/vnd.github+json")
             .query(&[
                 ("q", q.as_str()),
                 ("sort", metric.as_str()),
-                ("per_page", &per_page.to_string()),
-                ("page", &page.to_string()),
+                ("per_page", per_page_s.as_str()),
+                ("page", page_s.as_str()),
             ]);
         if let Some(t) = token {
             req = req.bearer_auth(t);
@@ -142,6 +144,24 @@ mod tests {
 
         let client = reqwest::Client::new();
         let repos = search_top(&client, &server.uri(), None, None, Metric::Forks, 1, 5).await.unwrap();
+        assert_eq!(repos.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn none_lang_uses_is_public_query() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/search/repositories"))
+            .and(query_param("q", "is:public"))
+            .and(query_param("sort", "stars"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(page_body(&["a/x"])))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = reqwest::Client::new();
+        let repos = search_top(&client, &server.uri(), None, None, Metric::Stars, 100, 1)
+            .await
+            .unwrap();
         assert_eq!(repos.len(), 1);
     }
 
