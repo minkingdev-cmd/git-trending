@@ -23,7 +23,10 @@ pub struct Report {
     pub failed: usize,
 }
 
-const SEARCH_INTERVAL: Duration = Duration::from_millis(1500);
+// GitHub 搜索 API 认证限额 30 次/分钟。1.5s 间隔峰值可达 40 次/分钟，
+// 且 watch 候选阶段每语言连发 5 页会触发二级限流（abuse detection, 403）。
+// 提到 2.5s（≈24 次/分钟）留出余量，确保含 watch 候选的完整抓取不被限流。
+const SEARCH_INTERVAL: Duration = Duration::from_millis(2500);
 const TRENDING_INTERVAL: Duration = Duration::from_millis(2000);
 
 impl Collector {
