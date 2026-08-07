@@ -79,6 +79,11 @@ pub struct LeaderboardFilter<'a> {
     pub topics: Option<&'a [String]>,
     pub topic_mode: TopicMode,
     pub q: Option<&'a str>,
+    /// When true, drop archived repos (`repos.archived = false`).
+    /// Store default is false (no filter); public API may pass true later.
+    pub exclude_archived: bool,
+    /// When `Some(n)`, require non-archived and `pushed_at >= now() - n days`.
+    pub active_within_days: Option<i32>,
 }
 
 impl Default for LeaderboardFilter<'_> {
@@ -90,6 +95,8 @@ impl Default for LeaderboardFilter<'_> {
             topics: None,
             topic_mode: TopicMode::And,
             q: None,
+            exclude_archived: false,
+            active_within_days: None,
         }
     }
 }
@@ -123,6 +130,14 @@ pub struct RepoInput {
     /// JSON array of language shares (name/pct/bytes); stored in `repos.languages`.
     pub languages_json: serde_json::Value,
     pub language_names: Vec<String>,
+    /// Last push time from GitHub (health).
+    pub pushed_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// GitHub archived flag (health). Default false for board-only upserts.
+    pub archived: bool,
+    pub open_issues_count: Option<i32>,
+    /// Repo creation time on GitHub.
+    pub created_at_gh: Option<chrono::DateTime<chrono::Utc>>,
+    pub latest_release_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl RepoInput {
@@ -153,6 +168,11 @@ pub struct LeaderboardRow {
     pub forks: i32,
     pub watchers: Option<i32>,
     pub stars_today: Option<i32>,
+    pub pushed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub archived: bool,
+    pub open_issues_count: Option<i32>,
+    pub created_at_gh: Option<chrono::DateTime<chrono::Utc>>,
+    pub latest_release_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Per-user track cap enforced by API (409 when `count_tracked` >= this).
@@ -175,4 +195,9 @@ pub struct TrackedRow {
     pub watchers: Option<i32>,
     pub stars_today: Option<i32>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    pub pushed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub archived: bool,
+    pub open_issues_count: Option<i32>,
+    pub created_at_gh: Option<chrono::DateTime<chrono::Utc>>,
+    pub latest_release_at: Option<chrono::DateTime<chrono::Utc>>,
 }

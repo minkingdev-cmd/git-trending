@@ -411,6 +411,9 @@ fn store_filter<'a>(parsed: &'a ParsedFilters) -> LeaderboardFilter<'a> {
         },
         topic_mode: parsed.topic_mode,
         q: parsed.q.as_deref(),
+        // Public boards will pass true from API in a later task.
+        exclude_archived: false,
+        active_within_days: None,
     }
 }
 
@@ -745,6 +748,11 @@ mod tests {
             topics: vec![],
             languages_json: RepoInput::languages_empty(),
             language_names: vec![],
+            pushed_at: None,
+            archived: false,
+            open_issues_count: None,
+            created_at_gh: None,
+            latest_release_at: None,
         }
     }
 
@@ -767,6 +775,11 @@ mod tests {
             topics: topics.iter().map(|t| t.to_string()).collect(),
             languages_json: languages,
             language_names: language_names.iter().map(|s| s.to_string()).collect(),
+            pushed_at: None,
+            archived: false,
+            open_issues_count: None,
+            created_at_gh: None,
+            latest_release_at: None,
         }
     }
 

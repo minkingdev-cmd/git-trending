@@ -1,4 +1,4 @@
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use sqlx::PgPool;
 
 use crate::models::{
@@ -178,7 +178,42 @@ pub fn tracked_row_to_leaderboard(t: TrackedRow) -> LeaderboardRow {
         forks: t.forks.unwrap_or(0),
         watchers: t.watchers,
         stars_today: t.stars_today,
+        pushed_at: t.pushed_at,
+        archived: t.archived,
+        open_issues_count: t.open_issues_count,
+        created_at_gh: t.created_at_gh,
+        latest_release_at: t.latest_release_at,
     }
+}
+
+/// Overwrite health columns for an existing repo (enrich / details path).
+pub async fn update_repo_health(
+    pool: &PgPool,
+    repo_id: i64,
+    pushed_at: Option<DateTime<Utc>>,
+    archived: bool,
+    open_issues_count: Option<i32>,
+    created_at_gh: Option<DateTime<Utc>>,
+    latest_release_at: Option<DateTime<Utc>>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"UPDATE repos
+           SET pushed_at = $2,
+               archived = $3,
+               open_issues_count = $4,
+               created_at_gh = $5,
+               latest_release_at = $6
+           WHERE id = $1"#,
+        repo_id,
+        pushed_at,
+        archived,
+        open_issues_count,
+        created_at_gh,
+        latest_release_at,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 pub async fn top_by_stars(
@@ -198,7 +233,12 @@ pub async fn top_by_stars(
                   r.description AS description, r.language AS language,
                   r.license AS license,
                   r.topics AS "topics!", r.languages AS "languages!",
-                  s.stars AS stars, s.forks AS forks, s.watchers AS watchers, s.stars_today AS stars_today
+                  s.stars AS stars, s.forks AS forks, s.watchers AS watchers, s.stars_today AS stars_today,
+                  r.pushed_at AS pushed_at,
+                  r.archived AS "archived!",
+                  r.open_issues_count AS open_issues_count,
+                  r.created_at_gh AS created_at_gh,
+                  r.latest_release_at AS latest_release_at
            FROM snapshots s JOIN repos r ON r.id = s.repo_id
            WHERE s.snapshot_date = $1 AND s.board = 'top_stars'
              AND ($2::text IS NULL OR r.language = $2)
@@ -227,6 +267,12 @@ pub async fn top_by_stars(
                  WHERE ln.name ILIKE '%' || $7 || '%'
                )
              )
+             AND ($9::bool IS NOT TRUE OR r.archived = false)
+             AND (
+               $10::int IS NULL
+               OR (r.archived = false AND r.pushed_at IS NOT NULL
+                   AND r.pushed_at >= (now() - ($10::int || ' days')::interval))
+             )
            ORDER BY s.stars DESC
            LIMIT $8"#,
         date,
@@ -236,7 +282,9 @@ pub async fn top_by_stars(
         topics.as_deref(),
         filter.topic_mode.as_str(),
         q,
-        limit
+        limit,
+        filter.exclude_archived,
+        filter.active_within_days,
     )
     .fetch_all(pool)
     .await
@@ -259,7 +307,12 @@ pub async fn top_by_forks(
                   r.description AS description, r.language AS language,
                   r.license AS license,
                   r.topics AS "topics!", r.languages AS "languages!",
-                  s.stars AS stars, s.forks AS forks, s.watchers AS watchers, s.stars_today AS stars_today
+                  s.stars AS stars, s.forks AS forks, s.watchers AS watchers, s.stars_today AS stars_today,
+                  r.pushed_at AS pushed_at,
+                  r.archived AS "archived!",
+                  r.open_issues_count AS open_issues_count,
+                  r.created_at_gh AS created_at_gh,
+                  r.latest_release_at AS latest_release_at
            FROM snapshots s JOIN repos r ON r.id = s.repo_id
            WHERE s.snapshot_date = $1 AND s.board = 'top_forks'
              AND ($2::text IS NULL OR r.language = $2)
@@ -288,6 +341,12 @@ pub async fn top_by_forks(
                  WHERE ln.name ILIKE '%' || $7 || '%'
                )
              )
+             AND ($9::bool IS NOT TRUE OR r.archived = false)
+             AND (
+               $10::int IS NULL
+               OR (r.archived = false AND r.pushed_at IS NOT NULL
+                   AND r.pushed_at >= (now() - ($10::int || ' days')::interval))
+             )
            ORDER BY s.forks DESC
            LIMIT $8"#,
         date,
@@ -297,7 +356,9 @@ pub async fn top_by_forks(
         topics.as_deref(),
         filter.topic_mode.as_str(),
         q,
-        limit
+        limit,
+        filter.exclude_archived,
+        filter.active_within_days,
     )
     .fetch_all(pool)
     .await
@@ -320,7 +381,12 @@ pub async fn top_by_watchers(
                   r.description AS description, r.language AS language,
                   r.license AS license,
                   r.topics AS "topics!", r.languages AS "languages!",
-                  s.stars AS stars, s.forks AS forks, s.watchers AS watchers, s.stars_today AS stars_today
+                  s.stars AS stars, s.forks AS forks, s.watchers AS watchers, s.stars_today AS stars_today,
+                  r.pushed_at AS pushed_at,
+                  r.archived AS "archived!",
+                  r.open_issues_count AS open_issues_count,
+                  r.created_at_gh AS created_at_gh,
+                  r.latest_release_at AS latest_release_at
            FROM snapshots s JOIN repos r ON r.id = s.repo_id
            WHERE s.snapshot_date = $1 AND s.board = 'top_watchers'
              AND ($2::text IS NULL OR r.language = $2)
@@ -349,6 +415,12 @@ pub async fn top_by_watchers(
                  WHERE ln.name ILIKE '%' || $7 || '%'
                )
              )
+             AND ($9::bool IS NOT TRUE OR r.archived = false)
+             AND (
+               $10::int IS NULL
+               OR (r.archived = false AND r.pushed_at IS NOT NULL
+                   AND r.pushed_at >= (now() - ($10::int || ' days')::interval))
+             )
            ORDER BY s.watchers DESC NULLS LAST
            LIMIT $8"#,
         date,
@@ -358,7 +430,9 @@ pub async fn top_by_watchers(
         topics.as_deref(),
         filter.topic_mode.as_str(),
         q,
-        limit
+        limit,
+        filter.exclude_archived,
+        filter.active_within_days,
     )
     .fetch_all(pool)
     .await
@@ -381,7 +455,12 @@ pub async fn trending(
                   r.description AS description, r.language AS language,
                   r.license AS license,
                   r.topics AS "topics!", r.languages AS "languages!",
-                  s.stars AS stars, s.forks AS forks, s.watchers AS watchers, s.stars_today AS stars_today
+                  s.stars AS stars, s.forks AS forks, s.watchers AS watchers, s.stars_today AS stars_today,
+                  r.pushed_at AS pushed_at,
+                  r.archived AS "archived!",
+                  r.open_issues_count AS open_issues_count,
+                  r.created_at_gh AS created_at_gh,
+                  r.latest_release_at AS latest_release_at
            FROM snapshots s JOIN repos r ON r.id = s.repo_id
            WHERE s.snapshot_date = $1 AND s.board = 'trending_daily'
              AND ($2::text IS NULL OR r.language = $2)
@@ -410,6 +489,12 @@ pub async fn trending(
                  WHERE ln.name ILIKE '%' || $7 || '%'
                )
              )
+             AND ($9::bool IS NOT TRUE OR r.archived = false)
+             AND (
+               $10::int IS NULL
+               OR (r.archived = false AND r.pushed_at IS NOT NULL
+                   AND r.pushed_at >= (now() - ($10::int || ' days')::interval))
+             )
            ORDER BY s.stars_today DESC NULLS LAST
            LIMIT $8"#,
         date,
@@ -419,7 +504,9 @@ pub async fn trending(
         topics.as_deref(),
         filter.topic_mode.as_str(),
         q,
-        limit
+        limit,
+        filter.exclude_archived,
+        filter.active_within_days,
     )
     .fetch_all(pool)
     .await
@@ -634,7 +721,12 @@ pub async fn list_tracked(
                   s.forks AS "forks?",
                   s.watchers AS "watchers?",
                   s.stars_today AS "stars_today?",
-                  t.created_at AS "created_at!"
+                  t.created_at AS "created_at!",
+                  r.pushed_at AS pushed_at,
+                  r.archived AS "archived!",
+                  r.open_issues_count AS open_issues_count,
+                  r.created_at_gh AS created_at_gh,
+                  r.latest_release_at AS latest_release_at
            FROM user_tracked_repos t
            JOIN repos r ON r.id = t.repo_id
            LEFT JOIN LATERAL (
@@ -673,6 +765,12 @@ pub async fn list_tracked(
                  WHERE ln.name ILIKE '%' || $7 || '%'
                )
              )
+             AND ($8::bool IS NOT TRUE OR r.archived = false)
+             AND (
+               $9::int IS NULL
+               OR (r.archived = false AND r.pushed_at IS NOT NULL
+                   AND r.pushed_at >= (now() - ($9::int || ' days')::interval))
+             )
            ORDER BY t.created_at DESC"#,
         user_id,
         filter.language,
@@ -680,7 +778,9 @@ pub async fn list_tracked(
         licenses.as_deref(),
         topics.as_deref(),
         filter.topic_mode.as_str(),
-        q
+        q,
+        filter.exclude_archived,
+        filter.active_within_days,
     )
     .fetch_all(pool)
     .await
@@ -718,6 +818,11 @@ mod tests {
             topics: vec![],
             languages_json: RepoInput::languages_empty(),
             language_names: vec![],
+            pushed_at: None,
+            archived: false,
+            open_issues_count: None,
+            created_at_gh: None,
+            latest_release_at: None,
         }
     }
 
@@ -1753,5 +1858,300 @@ mod tests {
         // Cap is enforced by API using this count; store still allows insert
         // beyond limit (caller decides). Documented contract:
         assert!(count_tracked(&pool, uid).await.unwrap() >= TRACKED_REPO_LIMIT);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn exclude_archived_and_active_within_days_filters() {
+        use chrono::{Duration, Utc};
+
+        let pool = test_pool().await;
+        // Unique date so we fully control the result set.
+        let date = NaiveDate::from_ymd_opt(2099, 3, 1).unwrap();
+        sqlx::query(
+            "DELETE FROM snapshots WHERE repo_id IN (SELECT id FROM repos WHERE full_name LIKE 'healthf/%')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("DELETE FROM repos WHERE full_name LIKE 'healthf/%'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM snapshots WHERE snapshot_date = $1")
+            .bind(date)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let now = Utc::now();
+        let id_active = upsert_repo(&pool, &repo("healthf/active", Some("Rust")), date)
+            .await
+            .unwrap();
+        update_repo_health(
+            &pool,
+            id_active,
+            Some(now - Duration::days(10)),
+            false,
+            Some(3),
+            Some(now - Duration::days(400)),
+            Some(now - Duration::days(5)),
+        )
+        .await
+        .unwrap();
+
+        let id_archived = upsert_repo(&pool, &repo("healthf/archived", Some("Rust")), date)
+            .await
+            .unwrap();
+        update_repo_health(
+            &pool,
+            id_archived,
+            Some(now - Duration::days(1)),
+            true,
+            Some(0),
+            Some(now - Duration::days(500)),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let id_stale = upsert_repo(&pool, &repo("healthf/stale", Some("Rust")), date)
+            .await
+            .unwrap();
+        update_repo_health(
+            &pool,
+            id_stale,
+            Some(now - Duration::days(120)),
+            false,
+            Some(10),
+            Some(now - Duration::days(800)),
+            None,
+        )
+        .await
+        .unwrap();
+
+        for (id, stars) in [(id_active, 300), (id_archived, 200), (id_stale, 100)] {
+            upsert_snapshot(
+                &pool,
+                id,
+                date,
+                Board::TopStars,
+                &SnapshotInput {
+                    stars,
+                    forks: 0,
+                    watchers: None,
+                    stars_today: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        // No health filter: all three.
+        let all = top_by_stars(&pool, date, LeaderboardFilter::empty(), 100)
+            .await
+            .unwrap();
+        let names: Vec<_> = all.iter().map(|r| r.full_name.clone()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "healthf/active".to_string(),
+                "healthf/archived".to_string(),
+                "healthf/stale".to_string()
+            ]
+        );
+        assert!(!all[0].archived);
+        assert!(all[1].archived);
+        assert_eq!(all[0].open_issues_count, Some(3));
+        assert!(all[0].pushed_at.is_some());
+        assert!(all[0].created_at_gh.is_some());
+        assert!(all[0].latest_release_at.is_some());
+
+        // exclude_archived: drops archived only.
+        let excl = top_by_stars(
+            &pool,
+            date,
+            LeaderboardFilter {
+                exclude_archived: true,
+                ..LeaderboardFilter::empty()
+            },
+            100,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            excl.iter().map(|r| r.full_name.clone()).collect::<Vec<_>>(),
+            vec!["healthf/active".to_string(), "healthf/stale".to_string()]
+        );
+
+        // active_within_days=90: only recent non-archived push (also implies not archived).
+        let active = top_by_stars(
+            &pool,
+            date,
+            LeaderboardFilter {
+                active_within_days: Some(90),
+                ..LeaderboardFilter::empty()
+            },
+            100,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            active
+                .iter()
+                .map(|r| r.full_name.clone())
+                .collect::<Vec<_>>(),
+            vec!["healthf/active".to_string()]
+        );
+
+        // Both filters: same as active_within alone for this fixture.
+        let both = top_by_stars(
+            &pool,
+            date,
+            LeaderboardFilter {
+                exclude_archived: true,
+                active_within_days: Some(90),
+                ..LeaderboardFilter::empty()
+            },
+            100,
+        )
+        .await
+        .unwrap();
+        assert_eq!(both.len(), 1);
+        assert_eq!(both[0].full_name, "healthf/active");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn update_repo_health_write_and_readback() {
+        use chrono::{Duration, Utc};
+
+        let pool = test_pool().await;
+        let date = NaiveDate::from_ymd_opt(2099, 3, 2).unwrap();
+        let id = upsert_repo(&pool, &repo("healthw/x", Some("Go")), date)
+            .await
+            .unwrap();
+
+        // Defaults from migration / insert.
+        let before = sqlx::query!(
+            r#"SELECT pushed_at, archived AS "archived!", open_issues_count,
+                      created_at_gh, latest_release_at
+               FROM repos WHERE id = $1"#,
+            id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(before.pushed_at.is_none());
+        assert!(!before.archived);
+        assert!(before.open_issues_count.is_none());
+
+        let now = Utc::now();
+        let pushed = now - Duration::days(2);
+        let created = now - Duration::days(1000);
+        let release = now - Duration::days(7);
+        update_repo_health(
+            &pool,
+            id,
+            Some(pushed),
+            true,
+            Some(42),
+            Some(created),
+            Some(release),
+        )
+        .await
+        .unwrap();
+
+        let after = sqlx::query!(
+            r#"SELECT pushed_at, archived AS "archived!", open_issues_count,
+                      created_at_gh, latest_release_at
+               FROM repos WHERE id = $1"#,
+            id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(after.archived);
+        assert_eq!(after.open_issues_count, Some(42));
+        assert!(after.pushed_at.is_some());
+        assert!(after.created_at_gh.is_some());
+        assert!(after.latest_release_at.is_some());
+
+        // Board upsert without health must not wipe (upsert_repo leaves health alone).
+        upsert_repo(&pool, &repo("healthw/x", Some("Rust")), date)
+            .await
+            .unwrap();
+        let preserved = sqlx::query!(
+            r#"SELECT language, archived AS "archived!", open_issues_count
+               FROM repos WHERE id = $1"#,
+            id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(preserved.language.as_deref(), Some("Rust"));
+        assert!(preserved.archived);
+        assert_eq!(preserved.open_issues_count, Some(42));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn list_tracked_exclude_archived_filter() {
+        use chrono::{Duration, Utc};
+
+        let pool = test_pool().await;
+        let date = NaiveDate::from_ymd_opt(2099, 3, 3).unwrap();
+        let uid = insert_test_user(&pool, "track_health").await;
+
+        let id_ok = upsert_repo(&pool, &repo("trackhealth/ok", None), date)
+            .await
+            .unwrap();
+        let id_arc = upsert_repo(&pool, &repo("trackhealth/arc", None), date)
+            .await
+            .unwrap();
+        update_repo_health(
+            &pool,
+            id_ok,
+            Some(Utc::now() - Duration::days(5)),
+            false,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        update_repo_health(
+            &pool,
+            id_arc,
+            Some(Utc::now() - Duration::days(5)),
+            true,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        track_repo(&pool, uid, id_ok).await.unwrap();
+        track_repo(&pool, uid, id_arc).await.unwrap();
+
+        let all = list_tracked(&pool, uid, LeaderboardFilter::empty())
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 2);
+
+        let filtered = list_tracked(
+            &pool,
+            uid,
+            LeaderboardFilter {
+                exclude_archived: true,
+                ..LeaderboardFilter::empty()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].full_name, "trackhealth/ok");
+        assert!(!filtered[0].archived);
+        assert!(filtered[0].pushed_at.is_some());
     }
 }

@@ -689,6 +689,11 @@ async fn track(
         topics: gh.topics.clone(),
         languages_json,
         language_names: gh.language_names.clone(),
+        pushed_at: None,
+        archived: false,
+        open_issues_count: None,
+        created_at_gh: None,
+        latest_release_at: None,
     };
 
     let repo_id = match store::upsert_repo(&state.pool, &repo_input, today).await {
@@ -833,6 +838,8 @@ async fn list_tracked_api(
         },
         topic_mode,
         q: q.as_deref(),
+        exclude_archived: false,
+        active_within_days: None,
     };
 
     let rows = match store::list_tracked(&state.pool, claims.sub, filter).await {
@@ -1160,6 +1167,11 @@ mod tests {
                     topics: vec![],
                     languages_json: RepoInput::languages_empty(),
                     language_names: vec![],
+                    pushed_at: None,
+                    archived: false,
+                    open_issues_count: None,
+                    created_at_gh: None,
+                    latest_release_at: None,
                 },
                 date,
             )
@@ -1380,6 +1392,11 @@ mod tests {
                 topics: vec!["ai".into()],
                 languages_json: serde_json::json!([{"name":"Rust","pct":100.0}]),
                 language_names: vec!["Rust".into()],
+                pushed_at: None,
+                archived: false,
+                open_issues_count: None,
+                created_at_gh: None,
+                latest_release_at: None,
             },
             today,
         )

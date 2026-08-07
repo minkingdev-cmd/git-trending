@@ -469,6 +469,11 @@ impl Collector {
                 topics: details.topics,
                 languages_json,
                 language_names,
+                pushed_at: None,
+                archived: false,
+                open_issues_count: None,
+                created_at_gh: None,
+                latest_release_at: None,
             };
 
             let repo_id = match core_store::upsert_repo(&self.pool, &repo, today).await {
@@ -837,6 +842,11 @@ mod tests {
                 topics: vec![],
                 languages_json: RepoInput::languages_empty(),
                 language_names: vec![],
+                pushed_at: None,
+                archived: false,
+                open_issues_count: None,
+                created_at_gh: None,
+                latest_release_at: None,
             },
             today,
         )
@@ -947,6 +957,11 @@ mod tests {
                 topics: vec![],
                 languages_json: RepoInput::languages_empty(),
                 language_names: vec![],
+                pushed_at: None,
+                archived: false,
+                open_issues_count: None,
+                created_at_gh: None,
+                latest_release_at: None,
             },
             today,
         )

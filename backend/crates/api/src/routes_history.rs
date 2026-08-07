@@ -204,6 +204,11 @@ mod tests {
                     topics: vec![],
                     languages_json: RepoInput::languages_empty(),
                     language_names: vec![],
+                    pushed_at: None,
+                    archived: false,
+                    open_issues_count: None,
+                    created_at_gh: None,
+                    latest_release_at: None,
                 },
                 d,
             )

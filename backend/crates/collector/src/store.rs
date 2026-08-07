@@ -61,6 +61,11 @@ async fn store_one(
         topics: enrich::normalize_topics(topics),
         languages_json: RepoInput::languages_empty(),
         language_names: vec![],
+        pushed_at: None,
+        archived: false,
+        open_issues_count: None,
+        created_at_gh: None,
+        latest_release_at: None,
     };
     let repo_id = core_store::upsert_repo(pool, &repo, date).await?;
     core_store::upsert_snapshot(pool, repo_id, date, board, &snap).await?;
@@ -189,6 +194,11 @@ pub async fn apply_enrichment(
         topics,
         languages_json,
         language_names,
+        pushed_at: None,
+        archived: false,
+        open_issues_count: None,
+        created_at_gh: None,
+        latest_release_at: None,
     };
     core_store::upsert_repo(pool, &repo, date).await?;
     Ok(())
