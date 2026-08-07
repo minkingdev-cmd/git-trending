@@ -72,14 +72,20 @@ export default function Controls({
     <section className="controls-panel" aria-label="筛选">
       <div className="controls-row">
         <div className="seg" role="group" aria-label="榜单">
-          {(["trending", "top"] as BoardKind[]).map((b) => (
+          {(
+            [
+              ["trending", "趋势榜"],
+              ["top", "总榜"],
+              ["tracked", "我的跟踪"],
+            ] as const
+          ).map(([b, label]) => (
             <button
               key={b}
               type="button"
               onClick={() => onBoard(b)}
               className={board === b ? "active" : undefined}
             >
-              {b === "trending" ? "趋势榜" : "总榜"}
+              {label}
             </button>
           ))}
         </div>
@@ -100,20 +106,22 @@ export default function Controls({
           </div>
         )}
 
-        <select
-          className="field-select"
-          value={date}
-          onChange={(e) => onDate(e.target.value)}
-          title="快照日期"
-          aria-label="日期"
-        >
-          <option value="">最新</option>
-          {dates.map((d) => (
-            <option key={d} value={d}>
-              {d}
-            </option>
-          ))}
-        </select>
+        {board !== "tracked" && (
+          <select
+            className="field-select"
+            value={date}
+            onChange={(e) => onDate(e.target.value)}
+            title="快照日期"
+            aria-label="日期"
+          >
+            <option value="">最新</option>
+            {dates.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       <div className="controls-row">

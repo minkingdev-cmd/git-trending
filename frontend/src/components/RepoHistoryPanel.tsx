@@ -13,6 +13,7 @@ interface Props {
 }
 
 function historyBoard(board: BoardKind, metric: Metric): string {
+  if (board === "tracked") return "tracked_daily";
   if (board === "trending") return "trending_daily";
   if (metric === "forks") return "top_forks";
   if (metric === "watchers") return "top_watchers";
@@ -25,6 +26,8 @@ function valueFromPoint(
   metric: Metric,
 ): number {
   if (board === "trending") return p.stars_today ?? 0;
+  // tracked_daily + top boards: prefer stars (or selected top metric).
+  if (board === "tracked") return p.stars;
   if (metric === "forks") return p.forks;
   if (metric === "watchers") return p.watchers ?? 0;
   return p.stars;

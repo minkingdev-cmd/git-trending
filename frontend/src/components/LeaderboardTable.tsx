@@ -19,6 +19,7 @@ interface Props {
 /** Primary column header label for the current board/metric. */
 export function primaryHeader(board: BoardKind, metric: Metric): string {
   if (board === "trending") return "今日 ★";
+  if (board === "tracked") return "★";
   if (metric === "forks") return "Fork";
   if (metric === "watchers") return "Watch";
   return "★";
@@ -31,6 +32,7 @@ export function primaryValue(
   metric: Metric,
 ): number {
   if (board === "trending") return item.stars_today ?? 0;
+  if (board === "tracked") return item.stars;
   if (metric === "forks") return item.forks;
   if (metric === "watchers") return item.watchers ?? 0;
   return item.stars;
@@ -47,6 +49,9 @@ export function secondaryLabel(
 ): string {
   if (board === "trending") {
     return `${compact(item.stars)} ★ · ${compact(item.forks)} ⑂`;
+  }
+  if (board === "tracked") {
+    return `${compact(item.forks)} ⑂ · ${compact(item.watchers ?? 0)} 👁`;
   }
   if (metric === "stars") {
     return `${compact(item.forks)} ⑂ · ${compact(item.watchers ?? 0)} 👁`;
@@ -255,6 +260,11 @@ export default function LeaderboardTable({
                           <span className="name">{item.full_name}</span>
                         )}
                       </a>
+                      {item.tracked_by_me && (
+                        <span className="badge-track" title="已在「我的跟踪」">
+                          已跟踪
+                        </span>
+                      )}
                     </div>
                     {onSelectRepo && (
                       <div className="row-actions">

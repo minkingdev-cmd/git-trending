@@ -49,6 +49,12 @@ describe("parseSearch", () => {
     expect(s.languages).toEqual(["TypeScript", "Go"]);
   });
 
+  it("parses board=tracked", () => {
+    const s = parseSearch("?board=tracked&q=cli");
+    expect(s.board).toBe("tracked");
+    expect(s.q).toBe("cli");
+  });
+
   it("maps legacy lang to languages when languages absent", () => {
     const s = parseSearch("?lang=Rust");
     expect(s.languages).toEqual(["Rust"]);
@@ -107,6 +113,19 @@ describe("buildSearch", () => {
       topics: ["rust", "tui"],
       topicMode: "or",
       languages: ["Rust"],
+    };
+    expect(parseSearch(buildSearch(original))).toEqual(original);
+  });
+
+  it("round-trips board=tracked", () => {
+    const original: UrlState = {
+      board: "tracked",
+      metric: "stars",
+      date: "",
+      q: "agent",
+      topics: ["ai"],
+      topicMode: "and",
+      languages: ["Go"],
     };
     expect(parseSearch(buildSearch(original))).toEqual(original);
   });

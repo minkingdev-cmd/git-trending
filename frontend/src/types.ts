@@ -89,3 +89,45 @@ export interface UserItem {
   is_admin: boolean;
   created_at: string;
 }
+
+/** Status of a user-tracked repo relative to public boards / snapshots. */
+export type TrackedStatus = "on_board" | "tracking" | "pending";
+
+export interface TrackedRepoItem {
+  full_name: string;
+  html_url: string;
+  description: string | null;
+  languages: LanguageShare[];
+  topics: string[];
+  stars: number;
+  forks: number;
+  watchers: number | null;
+  status: TrackedStatus | string;
+  added_at: string;
+}
+
+export interface TrackedListResponse {
+  items: TrackedRepoItem[];
+}
+
+export interface LookupResponse {
+  full_name: string;
+  html_url: string;
+  description: string | null;
+  languages: LanguageShare[];
+  topics: string[];
+  stars: number;
+  forks: number;
+  watchers: number | null;
+  on_leaderboard: boolean;
+  already_tracked: boolean;
+}
+
+export interface TrackResponse {
+  item: TrackedRepoItem;
+}
+
+export interface RepoRefBody {
+  full_name?: string;
+  url?: string;
+}

@@ -1,4 +1,4 @@
-export type BoardKind = "trending" | "top";
+export type BoardKind = "trending" | "top" | "tracked";
 export type Metric = "stars" | "forks" | "watchers";
 export type TopicMode = "and" | "or";
 
@@ -59,7 +59,9 @@ export function parseSearch(search: string): UrlState {
   const raw = search.startsWith("?") ? search.slice(1) : search;
   const params = new URLSearchParams(raw);
 
-  const board: BoardKind = params.get("board") === "top" ? "top" : "trending";
+  const boardRaw = params.get("board");
+  const board: BoardKind =
+    boardRaw === "top" || boardRaw === "tracked" ? boardRaw : "trending";
   const metricRaw = params.get("metric");
   const metric: Metric =
     metricRaw === "forks" || metricRaw === "watchers" ? metricRaw : "stars";

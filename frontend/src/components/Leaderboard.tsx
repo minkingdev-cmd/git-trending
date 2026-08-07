@@ -1,13 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import AddRepoModal from "./AddRepoModal";
 import Controls from "./Controls";
 import LeaderboardTable from "./LeaderboardTable";
 import RepoHistoryPanel from "./RepoHistoryPanel";
-import { api, UnauthorizedError } from "../api";
+import TrackedPanel from "./TrackedPanel";
+import {
+  api,
+  listTrackedRepos,
+  untrackRepo,
+  UnauthorizedError,
+} from "../api";
 import type {
   LanguageFacet,
   LeaderboardResponse,
   MetaResponse,
   TopicFacet,
+  TrackedRepoItem,
 } from "../types";
 import {
   applyDensityClasses,
@@ -39,7 +47,9 @@ interface Props {
   onUnauthorized?: () => void;
 }
 
-function aggregateFacetsFromItems(items: LeaderboardResponse["items"]): {
+function aggregateFacetsFromItems(
+  items: Array<{ topics?: string[]; languages?: { name: string }[]; language?: string | null }>,
+): {
   topics: TopicFacet[];
   languages: LanguageFacet[];
 } {
@@ -87,12 +97,15 @@ export default function Leaderboard({
   const [languages, setLanguages] = useState<string[]>(initial.languages);
   const [dates, setDates] = useState<string[]>([]);
   const [data, setData] = useState<LeaderboardResponse | null>(null);
+  const [trackedItems, setTrackedItems] = useState<TrackedRepoItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [historyRepo, setHistoryRepo] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>(() => getPreferredTheme());
   const [density, setDensity] = useState<Density>(() => readDensity());
   const [showDesc, setShowDesc] = useState(() => readShowDesc());
+  const [addOpen, setAddOpen] = useState(false);
+  const [untracking, setUntracking] = useState<string | null>(null);
 
   useEffect(() => {
     applyTheme(theme);
@@ -129,19 +142,31 @@ export default function Leaderboard({
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const params = new URLSearchParams();
-    if (date) params.set("date", date);
-    if (q.trim()) params.set("q", q.trim());
-    if (topics.length) params.set("topics", topics.join(","));
-    if (topicMode !== "and") params.set("topic_mode", topicMode);
-    if (languages.length) params.set("languages", languages.join(","));
-    const qs = params.toString();
-    const path =
-      board === "top"
-        ? `/api/leaderboard/top?metric=${encodeURIComponent(metric)}${qs ? `&${qs}` : ""}`
-        : `/api/leaderboard/trending${qs ? `?${qs}` : ""}`;
     try {
-      setData(await api<LeaderboardResponse>(path));
+      if (board === "tracked") {
+        const items = await listTrackedRepos({
+          q,
+          topics,
+          languages,
+          topicMode,
+        });
+        setTrackedItems(items);
+        setData(null);
+      } else {
+        const params = new URLSearchParams();
+        if (date) params.set("date", date);
+        if (q.trim()) params.set("q", q.trim());
+        if (topics.length) params.set("topics", topics.join(","));
+        if (topicMode !== "and") params.set("topic_mode", topicMode);
+        if (languages.length) params.set("languages", languages.join(","));
+        const qs = params.toString();
+        const path =
+          board === "top"
+            ? `/api/leaderboard/top?metric=${encodeURIComponent(metric)}${qs ? `&${qs}` : ""}`
+            : `/api/leaderboard/trending${qs ? `?${qs}` : ""}`;
+        setData(await api<LeaderboardResponse>(path));
+        setTrackedItems([]);
+      }
     } catch (e) {
       if (e instanceof UnauthorizedError) {
         onUnauthorized?.();
@@ -158,6 +183,10 @@ export default function Leaderboard({
   }, [load]);
 
   const { topicFacets, languageFacets } = useMemo(() => {
+    if (board === "tracked") {
+      const agg = aggregateFacetsFromItems(trackedItems);
+      return { topicFacets: agg.topics, languageFacets: agg.languages };
+    }
     if (!data) return { topicFacets: [] as TopicFacet[], languageFacets: [] as LanguageFacet[] };
     if (data.topic_facets || data.language_facets) {
       return {
@@ -167,7 +196,7 @@ export default function Leaderboard({
     }
     const agg = aggregateFacetsFromItems(data.items);
     return { topicFacets: agg.topics, languageFacets: agg.languages };
-  }, [data]);
+  }, [board, data, trackedItems]);
 
   const onToggleTopic = useCallback((topic: string) => {
     setTopics((cur) => toggleInList(cur, topic.toLowerCase()));
@@ -183,16 +212,64 @@ export default function Leaderboard({
     setLanguages([]);
   }, []);
 
+  const onUntrack = useCallback(
+    async (fullName: string) => {
+      setUntracking(fullName);
+      try {
+        await untrackRepo(fullName);
+        setTrackedItems((cur) => cur.filter((r) => r.full_name !== fullName));
+        // If currently viewing a public board, refresh so tracked_by_me badge updates.
+        if (board !== "tracked") {
+          void load();
+        }
+      } catch (e) {
+        if (e instanceof UnauthorizedError) {
+          onUnauthorized?.();
+          return;
+        }
+        setError(e instanceof Error ? e.message : "取消跟踪失败");
+      } finally {
+        setUntracking(null);
+      }
+    },
+    [board, load, onUnauthorized],
+  );
+
+  const onTracked = useCallback(
+    (item: TrackedRepoItem) => {
+      setBoard("tracked");
+      setTrackedItems((cur) => {
+        const without = cur.filter(
+          (r) => r.full_name.toLowerCase() !== item.full_name.toLowerCase(),
+        );
+        return [item, ...without];
+      });
+      // Reload list after track so status/meta match server (filters applied).
+      // Board state update triggers load via effect; force a tick if already on tracked.
+      if (board === "tracked") {
+        void load();
+      }
+    },
+    [board, load],
+  );
+
   const resultHint = useMemo(() => {
-    if (!data) return null;
-    const n = data.items.length;
-    const boardHint = board === "trending" ? "趋势榜" : `总榜·${metric}`;
+    const n = board === "tracked" ? trackedItems.length : (data?.items.length ?? 0);
+    if (board !== "tracked" && !data) return null;
+    const boardHint =
+      board === "trending"
+        ? "趋势榜"
+        : board === "tracked"
+          ? "我的跟踪"
+          : `总榜·${metric}`;
     const langHint = languages.length ? `lang×${languages.length}` : "全部语言";
     const parts = [`${n} 个结果`, boardHint, langHint];
     if (topics.length) parts.push(`tag ${topicMode.toUpperCase()}`);
     if (q.trim()) parts.push(`q`);
     return parts.join(" · ");
-  }, [data, board, metric, languages, topics, topicMode, q]);
+  }, [data, board, metric, languages, topics, topicMode, q, trackedItems]);
+
+  const showPublicTable = board !== "tracked";
 
   return (
     <div className="page">
@@ -210,6 +287,14 @@ export default function Leaderboard({
           className="flex flex-wrap items-center gap-3.5 text-[13px]"
           style={{ color: "var(--text-3)" }}
         >
+          <button
+            type="button"
+            className="header-btn"
+            title="跟踪爬虫未覆盖的仓库"
+            onClick={() => setAddOpen(true)}
+          >
+            ＋ 添加仓库
+          </button>
           <div className="theme-toggle" role="group" aria-label="主题">
             <button
               type="button"
@@ -228,7 +313,7 @@ export default function Leaderboard({
               ☾ Dark
             </button>
           </div>
-          {data?.date && <span>数据截至 {data.date}</span>}
+          {data?.date && board !== "tracked" && <span>数据截至 {data.date}</span>}
           <span>{username}</span>
           {isAdmin && onOpenAdmin && (
             <button type="button" onClick={onOpenAdmin} className="header-link">
@@ -267,7 +352,7 @@ export default function Leaderboard({
           onShowDesc={setShowDesc}
         />
 
-        {data && (
+        {(data || board === "tracked") && (
           <div className="result-meta">
             <div className="active-filters">
               {q.trim() && <span className="pill-q">q: {q.trim()}</span>}
@@ -307,14 +392,26 @@ export default function Leaderboard({
           </div>
         )}
 
-        {loading && (
+        {board === "tracked" && (
+          <TrackedPanel
+            items={trackedItems}
+            loading={loading}
+            error={error}
+            onUntrack={(name) => void onUntrack(name)}
+            onSelectRepo={setHistoryRepo}
+            onRetry={() => void load()}
+            untracking={untracking}
+          />
+        )}
+
+        {showPublicTable && loading && (
           <div className="space-y-2 py-4" aria-busy="true" aria-label="加载中">
             {[1, 2, 3, 4, 5].map((i) => (
               <div key={i} className="skeleton-row" style={{ opacity: 1 - i * 0.12 }} />
             ))}
           </div>
         )}
-        {error && (
+        {showPublicTable && error && (
           <div className="space-y-2 py-8 text-center">
             <p style={{ color: "var(--danger)" }}>{error}</p>
             <p className="text-sm" style={{ color: "var(--muted)" }}>
@@ -330,7 +427,7 @@ export default function Leaderboard({
             </button>
           </div>
         )}
-        {!loading && !error && data && (
+        {showPublicTable && !loading && !error && data && (
           <LeaderboardTable
             items={data.items}
             board={board}
@@ -354,6 +451,13 @@ export default function Leaderboard({
           onUnauthorized={onUnauthorized}
         />
       )}
+
+      <AddRepoModal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onTracked={onTracked}
+        onUnauthorized={onUnauthorized}
+      />
     </div>
   );
 }
