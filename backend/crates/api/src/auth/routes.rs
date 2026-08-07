@@ -44,6 +44,8 @@ pub struct MeResp {
     pub user_id: i64,
     pub username: String,
     pub is_admin: bool,
+    /// Whether the user has a stored (encrypted) GitHub PAT. Never exposes the token.
+    pub has_github_token: bool,
 }
 
 fn unauthorized(msg: &str) -> impl IntoResponse {
@@ -204,10 +206,14 @@ async fn me(State(state): State<AppState>, RequireAuth(claims): RequireAuth) -> 
     let is_admin = users::is_bootstrap_admin(&state.pool, claims.sub)
         .await
         .unwrap_or(false);
+    let has_github_token = users::user_has_github_token(&state.pool, claims.sub)
+        .await
+        .unwrap_or(false);
     Json(MeResp {
         user_id: claims.sub,
         username: claims.username,
         is_admin,
+        has_github_token,
     })
 }
 
