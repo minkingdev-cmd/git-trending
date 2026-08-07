@@ -8,7 +8,7 @@ use crate::store::{
 use crate::trending::fetch_trending;
 use chrono::Utc;
 use ght_core::config::Settings;
-use ght_core::models::Board;
+use ght_core::models::{Board, RepoInput, SnapshotInput};
 use ght_core::store as core_store;
 use sqlx::PgPool;
 use std::time::Duration;
@@ -169,7 +169,10 @@ impl Collector {
         // 4. Enrich topics/languages for today's board repos (failures do not fail the board).
         self.enrich_today_repos(today).await;
 
-        // 5. 清理过期 refresh token
+        // 5. Daily scan of user-tracked repos → tracked_daily snapshots (failures isolated).
+        self.scan_tracked_repos(today).await;
+
+        // 6. 清理过期 refresh token
         if let Err(e) = core_store::cleanup_expired_refresh_tokens(&self.pool).await {
             tracing::warn!(error = %e, "refresh token cleanup failed");
         }
@@ -273,6 +276,123 @@ impl Collector {
             }
         }
     }
+
+    /// Snapshot every distinct user-tracked repo onto `board=tracked_daily`.
+    /// Refreshes repo meta + languages. Per-repo failures are logged only.
+    async fn scan_tracked_repos(&self, today: chrono::NaiveDate) {
+        let names = match core_store::list_all_tracked_full_names(&self.pool).await {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::warn!(error = %e, "list tracked full_names failed");
+                return;
+            }
+        };
+        if names.is_empty() {
+            return;
+        }
+        tracing::info!(count = names.len(), "scanning tracked repos for tracked_daily");
+        let token = self.settings.github_token.as_deref();
+
+        for full_name in names {
+            let (owner, name) = split_full_name(&full_name);
+            if owner.is_empty() || name.is_empty() {
+                tracing::warn!(repo = %full_name, "invalid tracked full_name; skipping");
+                continue;
+            }
+
+            let details = match enrich::fetch_repo_details(
+                &self.http,
+                &self.api_base,
+                token,
+                owner,
+                name,
+            )
+            .await
+            {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        repo = %full_name,
+                        "fetch tracked repo details failed; continuing"
+                    );
+                    continue;
+                }
+            };
+            tokio::time::sleep(ENRICH_INTERVAL).await;
+
+            // Languages best-effort: empty on failure so upsert preserves existing.
+            let (shares, language_names) = match enrich::fetch_languages(
+                &self.http,
+                &self.api_base,
+                token,
+                owner,
+                name,
+            )
+            .await
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        repo = %full_name,
+                        "fetch tracked languages failed; continuing with empty"
+                    );
+                    (vec![], vec![])
+                }
+            };
+            tokio::time::sleep(ENRICH_INTERVAL).await;
+
+            let languages_json = enrich::languages_json(&shares);
+            let repo = RepoInput {
+                full_name: details.full_name.clone(),
+                owner: details.owner,
+                name: details.name,
+                html_url: details.html_url,
+                language: details
+                    .language
+                    .clone()
+                    .or_else(|| language_names.first().cloned()),
+                description: details.description,
+                topics: details.topics,
+                languages_json,
+                language_names,
+            };
+
+            let repo_id = match core_store::upsert_repo(&self.pool, &repo, today).await {
+                Ok(id) => id,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        repo = %full_name,
+                        "upsert tracked repo failed; continuing"
+                    );
+                    continue;
+                }
+            };
+
+            if let Err(e) = core_store::upsert_snapshot(
+                &self.pool,
+                repo_id,
+                today,
+                Board::TrackedDaily,
+                &SnapshotInput {
+                    stars: details.stars,
+                    forks: details.forks,
+                    watchers: details.watchers,
+                    stars_today: None,
+                },
+            )
+            .await
+            {
+                tracing::warn!(
+                    error = %e,
+                    repo = %full_name,
+                    "upsert tracked_daily snapshot failed; continuing"
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -289,10 +409,12 @@ mod tests {
             .unwrap_or_else(|_| "postgres://ght:ght@localhost:5433/ghtrending_test_collector".into());
         let pool = db::pg_pool(&url).await.expect("test db unreachable; run `make db`");
         db::migrate(&pool).await.unwrap();
-        sqlx::query("TRUNCATE repos, snapshots, users, invite_codes, refresh_tokens")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "TRUNCATE repos, snapshots, users, invite_codes, refresh_tokens, user_tracked_repos",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         pool
     }
 
@@ -336,10 +458,9 @@ mod tests {
             .await;
         Mock::given(method("GET"))
             .and(path_regex(r"^/repos/[^/]+/[^/]+$"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_string(r#"{"topics":["trending","demo"]}"#),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"full_name":"mock/repo","html_url":"https://github.com/mock/repo","topics":["trending","demo"],"private":false,"stargazers_count":0,"forks_count":0}"#,
+            ))
             .mount(server)
             .await;
     }
@@ -547,5 +668,189 @@ mod tests {
         .unwrap();
         assert_eq!(row.topics, vec!["ai".to_string()]);
         assert_eq!(row.language_names, vec!["Rust".to_string()]);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn scan_tracked_writes_tracked_daily_snapshot() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/tracked/only"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "full_name": "tracked/only",
+                "html_url": "https://github.com/tracked/only",
+                "description": "user tracked repo",
+                "language": "Rust",
+                "topics": ["AI", "tools"],
+                "private": false,
+                "stargazers_count": 1234,
+                "forks_count": 56,
+                "subscribers_count": 78,
+                "owner": {"login": "tracked"},
+                "name": "only"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/tracked/only/languages"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(r#"{"Rust":900,"TS":100}"#),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let pool = test_pool().await;
+        let today = Utc::now().date_naive();
+        let uid: i64 = sqlx::query_scalar(
+            "INSERT INTO users (username, password_hash) VALUES ('col_track_u', 'h') RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        // Seed repo + track row without any snapshot (pending until scan).
+        let repo_id = core_store::upsert_repo(
+            &pool,
+            &RepoInput {
+                full_name: "tracked/only".into(),
+                owner: "tracked".into(),
+                name: "only".into(),
+                html_url: "https://github.com/tracked/only".into(),
+                language: None,
+                description: None,
+                topics: vec![],
+                languages_json: RepoInput::languages_empty(),
+                language_names: vec![],
+            },
+            today,
+        )
+        .await
+        .unwrap();
+        core_store::track_repo(&pool, uid, repo_id).await.unwrap();
+
+        let collector = test_collector(pool.clone(), server.uri(), Some("t0k3n".into()));
+        collector.scan_tracked_repos(today).await;
+
+        let snap = sqlx::query!(
+            r#"SELECT s.stars, s.forks, s.watchers, s.board AS "board!"
+               FROM snapshots s
+               JOIN repos r ON r.id = s.repo_id
+               WHERE r.full_name = 'tracked/only' AND s.snapshot_date = $1"#,
+            today
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(snap.board, "tracked_daily");
+        assert_eq!(snap.stars, 1234);
+        assert_eq!(snap.forks, 56);
+        assert_eq!(snap.watchers, Some(78));
+
+        // Meta + languages refreshed.
+        let repo = sqlx::query!(
+            r#"SELECT description, topics AS "topics!", language_names AS "language_names!"
+               FROM repos WHERE full_name = 'tracked/only'"#
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(repo.description.as_deref(), Some("user tracked repo"));
+        assert_eq!(repo.topics, vec!["ai".to_string(), "tools".to_string()]);
+        assert_eq!(
+            repo.language_names,
+            vec!["Rust".to_string(), "TS".to_string()]
+        );
+
+        // Public boards remain empty — tracked_daily must not pollute top_*.
+        assert_eq!(
+            core_store::board_count(&pool, today, Board::TopStars)
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            core_store::board_count(&pool, today, Board::TrackedDaily)
+                .await
+                .unwrap(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn tracked_scan_failure_does_not_fail_public_boards() {
+        let server = MockServer::start().await;
+        // Public boards only; all /repos/* 404 so tracked scan + enrich fail isolated.
+        Mock::given(method("GET"))
+            .and(path("/search/repositories"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(search_body(&["a/top"], 999)))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data": {"q0": {"watchers": {"totalCount": 77}}}})))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path_regex("/trending.*"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(trending_body()))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/repos/"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let pool = test_pool().await;
+        let today = Utc::now().date_naive();
+        let uid: i64 = sqlx::query_scalar(
+            "INSERT INTO users (username, password_hash) VALUES ('col_track_fail', 'h') RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let repo_id = core_store::upsert_repo(
+            &pool,
+            &RepoInput {
+                full_name: "tracked/fail".into(),
+                owner: "tracked".into(),
+                name: "fail".into(),
+                html_url: "https://github.com/tracked/fail".into(),
+                language: None,
+                description: None,
+                topics: vec![],
+                languages_json: RepoInput::languages_empty(),
+                language_names: vec![],
+            },
+            today,
+        )
+        .await
+        .unwrap();
+        core_store::track_repo(&pool, uid, repo_id).await.unwrap();
+
+        let collector = test_collector(pool.clone(), server.uri(), Some("t0k3n".into()));
+        let report = collector.collect_once().await;
+        assert_eq!(
+            report.failed, 0,
+            "tracked fetch failure must not fail collect: ok={} failed={}",
+            report.ok, report.failed
+        );
+        let empty = ght_core::models::LeaderboardFilter::empty();
+        assert_eq!(
+            core_store::top_by_stars(&pool, today, empty, 100)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        // No tracked_daily snapshot written for the failing repo.
+        assert_eq!(
+            core_store::board_count(&pool, today, Board::TrackedDaily)
+                .await
+                .unwrap(),
+            0
+        );
     }
 }

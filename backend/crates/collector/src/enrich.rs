@@ -68,6 +68,88 @@ pub async fn fetch_languages(
     Ok(shares_from_language_map(map))
 }
 
+/// Full public-repo payload needed for tracked_daily snapshots and meta refresh.
+#[derive(Debug, Clone)]
+pub struct RepoDetails {
+    pub full_name: String,
+    pub owner: String,
+    pub name: String,
+    pub html_url: String,
+    pub description: Option<String>,
+    pub language: Option<String>,
+    pub topics: Vec<String>,
+    pub stars: i32,
+    pub forks: i32,
+    /// GitHub REST `subscribers_count` (true watchers).
+    pub watchers: Option<i32>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RepoMetaJson {
+    full_name: String,
+    html_url: String,
+    description: Option<String>,
+    language: Option<String>,
+    #[serde(default)]
+    topics: Vec<String>,
+    #[serde(default)]
+    private: bool,
+    stargazers_count: i32,
+    forks_count: i32,
+    #[serde(default)]
+    subscribers_count: Option<i32>,
+    owner: Option<RepoOwnerJson>,
+    name: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RepoOwnerJson {
+    login: String,
+}
+
+/// GET `{base}/repos/{owner}/{name}` → metrics + meta (rejects private).
+pub async fn fetch_repo_details(
+    client: &reqwest::Client,
+    base: &str,
+    token: Option<&str>,
+    owner: &str,
+    name: &str,
+) -> anyhow::Result<RepoDetails> {
+    let url = format!("{base}/repos/{owner}/{name}");
+    let mut req = client
+        .get(&url)
+        .header("Accept", "application/vnd.github+json");
+    if let Some(t) = token {
+        req = req.bearer_auth(t);
+    }
+    let meta: RepoMetaJson = req.send().await?.error_for_status()?.json().await?;
+    if meta.private {
+        anyhow::bail!("repo is private");
+    }
+    let owner_login = meta
+        .owner
+        .map(|o| o.login)
+        .unwrap_or_else(|| owner.to_string());
+    let repo_name = meta.name.unwrap_or_else(|| name.to_string());
+    let full_name = if meta.full_name.contains('/') {
+        meta.full_name
+    } else {
+        format!("{owner_login}/{repo_name}")
+    };
+    Ok(RepoDetails {
+        full_name,
+        owner: owner_login,
+        name: repo_name,
+        html_url: meta.html_url,
+        description: meta.description,
+        language: meta.language,
+        topics: normalize_topics(&meta.topics),
+        stars: meta.stargazers_count,
+        forks: meta.forks_count,
+        watchers: meta.subscribers_count,
+    })
+}
+
 /// GET `{base}/repos/{owner}/{name}` → normalized topics (for trending-only / missing topics).
 pub async fn fetch_repo_topics(
     client: &reqwest::Client,
@@ -76,20 +158,9 @@ pub async fn fetch_repo_topics(
     owner: &str,
     name: &str,
 ) -> anyhow::Result<Vec<String>> {
-    let url = format!("{base}/repos/{owner}/{name}");
-    let mut req = client
-        .get(&url)
-        .header("Accept", "application/vnd.github+json");
-    if let Some(t) = token {
-        req = req.bearer_auth(t);
-    }
-    #[derive(serde::Deserialize)]
-    struct RepoMeta {
-        #[serde(default)]
-        topics: Vec<String>,
-    }
-    let meta: RepoMeta = req.send().await?.error_for_status()?.json().await?;
-    Ok(normalize_topics(&meta.topics))
+    Ok(fetch_repo_details(client, base, token, owner, name)
+        .await?
+        .topics)
 }
 
 #[cfg(test)]
@@ -188,8 +259,9 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/repos/o/n"))
             .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_string(r#"{"topics":["AI","llm","AI"]}"#),
+                ResponseTemplate::new(200).set_body_string(
+                    r#"{"full_name":"o/n","html_url":"https://github.com/o/n","topics":["AI","llm","AI"],"stargazers_count":1,"forks_count":0}"#,
+                ),
             )
             .expect(1)
             .mount(&server)
@@ -199,5 +271,39 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(topics, vec!["ai".to_string(), "llm".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn fetch_repo_details_parses_metrics_and_rejects_private() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/n"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"full_name":"o/n","html_url":"https://github.com/o/n","description":"d","language":"Rust","topics":["AI"],"private":false,"stargazers_count":10,"forks_count":2,"subscribers_count":3,"owner":{"login":"o"},"name":"n"}"#,
+            ))
+            .mount(&server)
+            .await;
+        let client = reqwest::Client::new();
+        let d = fetch_repo_details(&client, &server.uri(), Some("tok"), "o", "n")
+            .await
+            .unwrap();
+        assert_eq!(d.stars, 10);
+        assert_eq!(d.forks, 2);
+        assert_eq!(d.watchers, Some(3));
+        assert_eq!(d.topics, vec!["ai".to_string()]);
+
+        let server2 = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/priv"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"full_name":"o/priv","html_url":"https://github.com/o/priv","private":true,"stargazers_count":0,"forks_count":0}"#,
+            ))
+            .mount(&server2)
+            .await;
+        assert!(
+            fetch_repo_details(&client, &server2.uri(), None, "o", "priv")
+                .await
+                .is_err()
+        );
     }
 }
