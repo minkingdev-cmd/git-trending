@@ -67,6 +67,9 @@ export default function Controls({
   }, [qDraft, q, onQ]);
 
   const hasFilters = Boolean(q.trim() || topics.length || languages.length);
+  // Facet chip rows collapse to a single line by default.
+  const [langFacetsOpen, setLangFacetsOpen] = useState(false);
+  const [topicFacetsOpen, setTopicFacetsOpen] = useState(false);
 
   return (
     <section className="controls-panel" aria-label="筛选">
@@ -192,60 +195,88 @@ export default function Controls({
         </button>
       </div>
 
-      <div className="lang-bar-filter">
+      <div
+        className={`facet-row${langFacetsOpen ? " is-expanded" : ""}`}
+      >
         <span className="facet-label">语言</span>
-        <div className="chips" aria-label="语言多选（仓库含该语言即匹配）">
-          {languageFacets.length === 0 ? (
-            <span className="facet-empty">—</span>
-          ) : (
-            languageFacets.map(({ language, count }) => {
-              const active = languages.includes(language);
-              return (
-                <button
-                  key={language}
-                  type="button"
-                  className={`chip${active ? " active" : ""}`}
-                  onClick={() => onToggleLanguage(language)}
-                >
-                  <span
-                    className="lang-dot"
-                    style={{
-                      background: langColor(language),
-                      width: 7,
-                      height: 7,
-                    }}
-                  />
-                  {language}
-                  <span className="count">{count}</span>
-                </button>
-              );
-            })
-          )}
+        <div className="facet-chips-wrap">
+          <div className="chips" aria-label="语言多选（仓库含该语言即匹配）">
+            {languageFacets.length === 0 ? (
+              <span className="facet-empty">—</span>
+            ) : (
+              languageFacets.map(({ language, count }) => {
+                const active = languages.includes(language);
+                return (
+                  <button
+                    key={language}
+                    type="button"
+                    className={`chip${active ? " active" : ""}`}
+                    onClick={() => onToggleLanguage(language)}
+                  >
+                    <span
+                      className="lang-dot"
+                      style={{
+                        background: langColor(language),
+                        width: 7,
+                        height: 7,
+                      }}
+                    />
+                    {language}
+                    <span className="count">{count}</span>
+                  </button>
+                );
+              })
+            )}
+          </div>
         </div>
+        {languageFacets.length > 0 && (
+          <button
+            type="button"
+            className="facet-toggle"
+            onClick={() => setLangFacetsOpen((v) => !v)}
+            aria-expanded={langFacetsOpen}
+          >
+            {langFacetsOpen ? "收起" : "展开"}
+          </button>
+        )}
       </div>
 
-      <div className="topic-bar">
+      <div
+        className={`facet-row${topicFacetsOpen ? " is-expanded" : ""}`}
+      >
         <span className="facet-label">标签</span>
-        <div className="chips" aria-label="可选标签">
-          {topicFacets.length === 0 ? (
-            <span className="facet-empty">—</span>
-          ) : (
-            topicFacets.map(({ topic, count }) => {
-              const active = topics.includes(topic);
-              return (
-                <button
-                  key={topic}
-                  type="button"
-                  className={`chip${active ? " active" : ""}`}
-                  onClick={() => onToggleTopic(topic)}
-                >
-                  {topic}
-                  <span className="count">{count}</span>
-                </button>
-              );
-            })
-          )}
+        <div className="facet-chips-wrap">
+          <div className="chips" aria-label="可选标签">
+            {topicFacets.length === 0 ? (
+              <span className="facet-empty">—</span>
+            ) : (
+              topicFacets.map(({ topic, count }) => {
+                const active = topics.includes(topic);
+                return (
+                  <button
+                    key={topic}
+                    type="button"
+                    className={`chip${active ? " active" : ""}`}
+                    onClick={() => onToggleTopic(topic)}
+                  >
+                    {topic}
+                    <span className="count">{count}</span>
+                  </button>
+                );
+              })
+            )}
+          </div>
         </div>
+        {topicFacets.length > 0 && (
+          <button
+            type="button"
+            className="facet-toggle"
+            onClick={() => setTopicFacetsOpen((v) => !v)}
+            aria-expanded={topicFacetsOpen}
+          >
+            {topicFacetsOpen ? "收起" : "展开"}
+          </button>
+        )}
       </div>
     </section>
   );

@@ -75,7 +75,8 @@ function rankClass(rank: number): string {
   return "rank";
 }
 
-function TopicRow({
+/** Tags cell: chips with expand/collapse for overflow. */
+function TagsCell({
   topics,
   selectedTopics,
   maxShow,
@@ -86,31 +87,41 @@ function TopicRow({
   maxShow: number;
   onToggleTopic?: (topic: string) => void;
 }) {
-  if (!topics.length) return null;
-  const shown = topics.slice(0, maxShow);
-  const rest = topics.length - shown.length;
+  const [expanded, setExpanded] = useState(false);
+  if (!topics.length) {
+    return <span className="lang-empty">—</span>;
+  }
+  const rest = Math.max(0, topics.length - maxShow);
+  const moreTitle = topics.slice(maxShow).join(", ");
   return (
-    <div className="topic-row">
-      {shown.map((t) => {
-        const on = selectedTopics.includes(t);
-        return (
-          <button
-            key={t}
-            type="button"
-            className={`chip-sm${on ? " on-filter" : ""}`}
-            onClick={() => onToggleTopic?.(t)}
-          >
-            {t}
-          </button>
-        );
-      })}
+    <div className={`tags-cell-inner${expanded ? " is-expanded" : ""}`}>
+      <div className="topic-row in-cell">
+        {topics.map((t, i) => {
+          const on = selectedTopics.includes(t);
+          const extra = i >= maxShow;
+          return (
+            <button
+              key={t}
+              type="button"
+              className={`chip-sm${on ? " on-filter" : ""}${extra ? " is-extra" : ""}`}
+              onClick={() => onToggleTopic?.(t)}
+              title={on ? `取消筛选 ${t}` : `按标签筛选：${t}`}
+            >
+              {t}
+            </button>
+          );
+        })}
+      </div>
       {rest > 0 && (
-        <span
+        <button
+          type="button"
           className="chip-sm more-topics"
-          title={topics.slice(maxShow).join(", ")}
+          title={expanded ? "收起标签" : moreTitle}
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
         >
-          +{rest}
-        </span>
+          {expanded ? "收起" : `+${rest}`}
+        </button>
       )}
     </div>
   );
@@ -213,7 +224,7 @@ export default function LeaderboardTable({
     );
   }
 
-  const maxTopics = density === "compact" ? 2 : 4;
+  const maxTopics = density === "compact" ? 2 : 3;
   const maxLangs = density === "compact" ? 2 : 3;
 
   return (
@@ -223,7 +234,8 @@ export default function LeaderboardTable({
           <tr>
             <th style={{ width: 44 }}>#</th>
             <th>Repo</th>
-            <th style={{ width: 200 }}>Languages</th>
+            <th style={{ width: 180 }}>Tags</th>
+            <th style={{ width: 180 }}>Languages</th>
             <th style={{ width: 100 }}>License</th>
             <th className="num" style={{ width: 100 }}>
               {primaryHeader(board, metric)}
@@ -285,7 +297,9 @@ export default function LeaderboardTable({
                       {item.description}
                     </p>
                   )}
-                  <TopicRow
+                </td>
+                <td className="tags-cell">
+                  <TagsCell
                     topics={topics}
                     selectedTopics={selectedTopics}
                     maxShow={maxTopics}
