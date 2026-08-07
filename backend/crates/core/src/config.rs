@@ -21,6 +21,13 @@ pub struct Settings {
     /// From `TOKEN_ENCRYPTION_KEY` when set (see [`parse_token_encryption_key`]),
     /// otherwise `SHA-256(JWT_SECRET || "ght-github-token-v1")`.
     pub token_encryption_key: [u8; 32],
+    /// Discover shared-path global Search requests per minute (`DISCOVER_RATE_LIMIT_PER_MIN`).
+    pub discover_rate_limit_per_min: u32,
+    /// Discover shared-path per-user requests per minute (`DISCOVER_RATE_LIMIT_PER_USER_PER_MIN`).
+    pub discover_rate_limit_per_user_per_min: u32,
+    /// Discover user-token path per-user requests per minute
+    /// (`DISCOVER_RATE_LIMIT_PER_USER_WITH_TOKEN_PER_MIN`).
+    pub discover_rate_limit_per_user_with_token_per_min: u32,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -61,8 +68,24 @@ impl Settings {
             collect_time,
             cookie_secure: get("COOKIE_SECURE").map(|v| v == "true").unwrap_or(false),
             token_encryption_key,
+            discover_rate_limit_per_min: parse_u32_default(
+                get("DISCOVER_RATE_LIMIT_PER_MIN").as_deref(),
+                20,
+            ),
+            discover_rate_limit_per_user_per_min: parse_u32_default(
+                get("DISCOVER_RATE_LIMIT_PER_USER_PER_MIN").as_deref(),
+                10,
+            ),
+            discover_rate_limit_per_user_with_token_per_min: parse_u32_default(
+                get("DISCOVER_RATE_LIMIT_PER_USER_WITH_TOKEN_PER_MIN").as_deref(),
+                25,
+            ),
         })
     }
+}
+
+fn parse_u32_default(raw: Option<&str>, default: u32) -> u32 {
+    raw.and_then(|s| s.trim().parse().ok()).unwrap_or(default)
 }
 
 /// `SHA-256(jwt_secret_bytes || domain_sep_bytes)` → 32-byte AES key.
@@ -172,6 +195,25 @@ mod tests {
         assert!(s.github_token.is_none());
         assert_eq!(s.github_api_base, "https://api.github.com");
         assert_eq!(s.token_encryption_key, derive_token_encryption_key("secret"));
+        assert_eq!(s.discover_rate_limit_per_min, 20);
+        assert_eq!(s.discover_rate_limit_per_user_per_min, 10);
+        assert_eq!(s.discover_rate_limit_per_user_with_token_per_min, 25);
+    }
+
+    #[test]
+    fn discover_rate_limits_from_env() {
+        let s = Settings::from_map(|k| match k {
+            "DATABASE_URL" => Some("postgres://x".into()),
+            "JWT_SECRET" => Some("secret".into()),
+            "DISCOVER_RATE_LIMIT_PER_MIN" => Some("30".into()),
+            "DISCOVER_RATE_LIMIT_PER_USER_PER_MIN" => Some("5".into()),
+            "DISCOVER_RATE_LIMIT_PER_USER_WITH_TOKEN_PER_MIN" => Some("40".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(s.discover_rate_limit_per_min, 30);
+        assert_eq!(s.discover_rate_limit_per_user_per_min, 5);
+        assert_eq!(s.discover_rate_limit_per_user_with_token_per_min, 40);
     }
 
     #[test]

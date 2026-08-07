@@ -162,7 +162,7 @@ mod tests {
             _ => None,
         })
         .unwrap();
-        AppState { pool, settings }
+        AppState::new(pool, settings)
     }
 
     async fn get(state: AppState, uri: &str, cookie: &str) -> (StatusCode, String) {

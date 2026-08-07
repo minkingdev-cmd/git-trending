@@ -1023,7 +1023,7 @@ mod tests {
             _ => None,
         })
         .unwrap();
-        AppState { pool, settings }
+        AppState::new(pool, settings)
     }
 
     fn auth_cookie(state: &AppState, user_id: i64) -> String {

@@ -26,7 +26,7 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    let state = ght_api::state::AppState { pool, settings };
+    let state = ght_api::state::AppState::new(pool, settings);
     let index = format!("{static_dir}/index.html");
     let app = ght_api::build_router(state)
         .layer(TraceLayer::new_for_http())

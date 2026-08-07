@@ -800,7 +800,7 @@ mod tests {
             _ => None,
         })
         .unwrap();
-        AppState { pool, settings }
+        AppState::new(pool, settings)
     }
 
     fn repo(full_name: &str, lang: Option<&str>) -> RepoInput {

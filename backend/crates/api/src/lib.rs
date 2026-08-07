@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod rate_limit;
 pub mod routes_admin;
 pub mod routes_history;
 pub mod routes_leaderboard;

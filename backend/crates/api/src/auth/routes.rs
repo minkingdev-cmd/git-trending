@@ -239,7 +239,7 @@ mod tests {
             _ => None,
         })
         .unwrap();
-        AppState { pool, settings }
+        AppState::new(pool, settings)
     }
 
     fn json_request(method: &str, uri: &str, body: &str, cookie: Option<&str>) -> Request<Body> {
