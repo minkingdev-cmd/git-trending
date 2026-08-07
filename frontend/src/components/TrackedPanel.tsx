@@ -4,7 +4,12 @@ import type { TrackedRepoItem, TrackedStatus } from "../types";
 interface Props {
   items: TrackedRepoItem[];
   loading: boolean;
+  /** Load/list error — replaces list content when set. */
   error: string | null;
+  /** Untrack action error — banner only; list stays visible. */
+  untrackError?: string | null;
+  /** True when q/topics/languages filters are active (empty-state copy). */
+  hasFilters?: boolean;
   onUntrack: (fullName: string) => void;
   onSelectRepo: (fullName: string) => void;
   onRetry?: () => void;
@@ -52,6 +57,8 @@ export default function TrackedPanel({
   items,
   loading,
   error,
+  untrackError = null,
+  hasFilters = false,
   onUntrack,
   onSelectRepo,
   onRetry,
@@ -89,9 +96,22 @@ export default function TrackedPanel({
         </div>
       )}
 
+      {/* Untrack failure: banner only — keep list visible. */}
+      {!loading && !error && untrackError && (
+        <p
+          className="field-error"
+          role="alert"
+          style={{ marginBottom: 12 }}
+        >
+          {untrackError}
+        </p>
+      )}
+
       {!loading && !error && items.length === 0 && (
         <div className="tracked-empty">
-          还没有跟踪仓库。点击右上角「＋ 添加仓库」开始。
+          {hasFilters
+            ? "无匹配的跟踪仓库。试试清除筛选或换关键词。"
+            : "还没有跟踪仓库。点击右上角「＋ 添加仓库」开始。"}
         </div>
       )}
 

@@ -106,6 +106,7 @@ export default function Leaderboard({
   const [showDesc, setShowDesc] = useState(() => readShowDesc());
   const [addOpen, setAddOpen] = useState(false);
   const [untracking, setUntracking] = useState<string | null>(null);
+  const [untrackError, setUntrackError] = useState<string | null>(null);
 
   useEffect(() => {
     applyTheme(theme);
@@ -142,6 +143,7 @@ export default function Leaderboard({
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setUntrackError(null);
     try {
       if (board === "tracked") {
         const items = await listTrackedRepos({
@@ -215,6 +217,7 @@ export default function Leaderboard({
   const onUntrack = useCallback(
     async (fullName: string) => {
       setUntracking(fullName);
+      setUntrackError(null);
       try {
         await untrackRepo(fullName);
         setTrackedItems((cur) => cur.filter((r) => r.full_name !== fullName));
@@ -227,7 +230,8 @@ export default function Leaderboard({
           onUnauthorized?.();
           return;
         }
-        setError(e instanceof Error ? e.message : "取消跟踪失败");
+        // Do not use load `error` — that would hide the tracked list.
+        setUntrackError(e instanceof Error ? e.message : "取消跟踪失败");
       } finally {
         setUntracking(null);
       }
@@ -397,6 +401,8 @@ export default function Leaderboard({
             items={trackedItems}
             loading={loading}
             error={error}
+            untrackError={untrackError}
+            hasFilters={hasActiveFilters({ q, topics, languages })}
             onUntrack={(name) => void onUntrack(name)}
             onSelectRepo={setHistoryRepo}
             onRetry={() => void load()}
