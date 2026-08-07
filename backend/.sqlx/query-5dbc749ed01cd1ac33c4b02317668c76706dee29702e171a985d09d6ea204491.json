@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.language AS lang, COUNT(*) AS cnt\n           FROM snapshots s JOIN repos r ON r.id = s.repo_id\n           WHERE s.snapshot_date = $1 AND s.board = $2 AND r.language IS NOT NULL\n           GROUP BY r.language\n           ORDER BY cnt DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "lang",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "cnt",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Date",
+        "Text"
+      ]
+    },
+    "nullable": [
+      true,
+      null
+    ]
+  },
+  "hash": "5dbc749ed01cd1ac33c4b02317668c76706dee29702e171a985d09d6ea204491"
+}

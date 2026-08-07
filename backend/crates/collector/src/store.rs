@@ -36,6 +36,9 @@ async fn store_one(
         html_url: html_url.to_string(),
         language: language.clone(),
         description: description.clone(),
+        topics: vec![],
+        languages_json: RepoInput::languages_empty(),
+        language_names: vec![],
     };
     let repo_id = core_store::upsert_repo(pool, &repo, date).await?;
     core_store::upsert_snapshot(pool, repo_id, date, board, &snap).await?;

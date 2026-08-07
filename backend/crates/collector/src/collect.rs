@@ -256,20 +256,21 @@ mod tests {
         assert!(report.failed == 0, "report: ok={} failed={}", report.ok, report.failed);
 
         let today = Utc::now().date_naive();
-        assert_eq!(core_store::top_by_stars(&pool, today, None, 100).await.unwrap().len(), 1);
-        assert_eq!(core_store::top_by_forks(&pool, today, None, 100).await.unwrap().len(), 1);
-        let watch = core_store::top_by_watchers(&pool, today, None, 100).await.unwrap();
+        let empty = ght_core::models::LeaderboardFilter::empty();
+        assert_eq!(core_store::top_by_stars(&pool, today, empty, 100).await.unwrap().len(), 1);
+        assert_eq!(core_store::top_by_forks(&pool, today, empty, 100).await.unwrap().len(), 1);
+        let watch = core_store::top_by_watchers(&pool, today, empty, 100).await.unwrap();
         assert_eq!(watch.len(), 1);
         assert_eq!(watch[0].watchers, Some(77));
-        assert_eq!(core_store::trending(&pool, today, None, 100).await.unwrap().len(), 3);
+        assert_eq!(core_store::trending(&pool, today, empty, 100).await.unwrap().len(), 3);
 
         // 幂等：重跑行数不变，四 board 均断言
         let report2 = collector.collect_once().await;
         assert_eq!(report2.failed, 0);
-        assert_eq!(core_store::top_by_stars(&pool, today, None, 100).await.unwrap().len(), 1);
-        assert_eq!(core_store::top_by_forks(&pool, today, None, 100).await.unwrap().len(), 1);
-        assert_eq!(core_store::top_by_watchers(&pool, today, None, 100).await.unwrap().len(), 1);
-        assert_eq!(core_store::trending(&pool, today, None, 100).await.unwrap().len(), 3);
+        assert_eq!(core_store::top_by_stars(&pool, today, empty, 100).await.unwrap().len(), 1);
+        assert_eq!(core_store::top_by_forks(&pool, today, empty, 100).await.unwrap().len(), 1);
+        assert_eq!(core_store::top_by_watchers(&pool, today, empty, 100).await.unwrap().len(), 1);
+        assert_eq!(core_store::trending(&pool, today, empty, 100).await.unwrap().len(), 3);
         assert_eq!(
             core_store::board_count(&pool, today, Board::TopStars).await.unwrap(),
             1
@@ -298,7 +299,8 @@ mod tests {
         let report = collector.collect_once().await;
         assert!(report.failed == 0);
         let today = Utc::now().date_naive();
-        assert_eq!(core_store::top_by_watchers(&pool, today, None, 100).await.unwrap().len(), 0);
-        assert_eq!(core_store::top_by_stars(&pool, today, None, 100).await.unwrap().len(), 1);
+        let empty = ght_core::models::LeaderboardFilter::empty();
+        assert_eq!(core_store::top_by_watchers(&pool, today, empty, 100).await.unwrap().len(), 0);
+        assert_eq!(core_store::top_by_stars(&pool, today, empty, 100).await.unwrap().len(), 1);
     }
 }

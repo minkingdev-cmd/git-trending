@@ -4,7 +4,7 @@ use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::{Json, Router};
-use ght_core::models::Board;
+use ght_core::models::{Board, LeaderboardFilter};
 use ght_core::store as store;
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +20,14 @@ pub struct TopParams {
 pub struct TrendingParams {
     pub language: Option<String>,
     /// Optional snapshot date YYYY-MM-DD; defaults to latest
+    pub date: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct LanguageParams {
+    /// top_stars | top_forks | top_watchers | trending_daily; defaults to top_stars
+    pub board: Option<String>,
+    /// Optional snapshot date YYYY-MM-DD; defaults to latest for the board
     pub date: Option<String>,
 }
 
@@ -112,11 +120,14 @@ async fn top(
             .into_response()
         }
     };
-    let lang = params.language.as_deref();
+    let filter = LeaderboardFilter {
+        language: params.language.as_deref(),
+        ..LeaderboardFilter::empty()
+    };
     let rows = match board {
-        Board::TopStars => store::top_by_stars(&state.pool, date, lang, 100).await,
-        Board::TopForks => store::top_by_forks(&state.pool, date, lang, 100).await,
-        Board::TopWatchers => store::top_by_watchers(&state.pool, date, lang, 100).await,
+        Board::TopStars => store::top_by_stars(&state.pool, date, filter, 100).await,
+        Board::TopForks => store::top_by_forks(&state.pool, date, filter, 100).await,
+        Board::TopWatchers => store::top_by_watchers(&state.pool, date, filter, 100).await,
         _ => unreachable!(),
     };
     match rows {
@@ -162,7 +173,11 @@ async fn trending(
             .into_response()
         }
     };
-    match store::trending(&state.pool, date, params.language.as_deref(), 100).await {
+    let filter = LeaderboardFilter {
+        language: params.language.as_deref(),
+        ..LeaderboardFilter::empty()
+    };
+    match store::trending(&state.pool, date, filter, 100).await {
         Ok(rows) => Json(LeaderboardResp {
             date: date.format("%Y-%m-%d").to_string(),
             board: board.as_str().to_string(),
@@ -174,12 +189,38 @@ async fn trending(
     }
 }
 
-async fn languages(State(state): State<AppState>, _auth: RequireAuth) -> impl IntoResponse {
-    let date = match store::latest_snapshot_date(&state.pool, Board::TopStars).await {
-        Ok(Some(d)) => d,
-        _ => return Json(serde_json::json!([])).into_response(),
+async fn languages(
+    State(state): State<AppState>,
+    _auth: RequireAuth,
+    Query(params): Query<LanguageParams>,
+) -> impl IntoResponse {
+    let board = match params.board.as_deref() {
+        Some(b) => match Board::parse(b) {
+            Some(b) => b,
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error":"board must be top_stars|top_forks|top_watchers|trending_daily"})),
+                )
+                    .into_response()
+            }
+        },
+        None => Board::TopStars,
     };
-    match store::languages_with_counts(&state.pool, date).await {
+    let date =
+        match crate::routes_history::resolve_date(&state.pool, board, params.date.as_deref()).await
+        {
+            Some(d) => d,
+            None if params.date.is_some() => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error":"invalid date, expected YYYY-MM-DD"})),
+                )
+                    .into_response()
+            }
+            None => return Json(serde_json::json!([])).into_response(),
+        };
+    match store::languages_with_counts(&state.pool, date, board).await {
         Ok(rows) => {
             let items: Vec<serde_json::Value> = rows
                 .into_iter()
@@ -284,6 +325,9 @@ mod tests {
             html_url: format!("https://github.com/{full_name}"),
             language: lang.map(String::from),
             description: None,
+            topics: vec![],
+            languages_json: RepoInput::languages_empty(),
+            language_names: vec![],
         }
     }
 
@@ -435,13 +479,43 @@ mod tests {
 
         let (_, body) = get(state.clone(), "/api/languages", Some(cookie.clone())).await;
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-        let langs: Vec<&str> = v
+        let langs = v.as_array().unwrap();
+        let names: Vec<&str> = langs.iter().map(|x| x["language"].as_str().unwrap()).collect();
+        assert!(names.contains(&"Python") && names.contains(&"Rust"));
+        // Regression for cross-board double counting: seed puts 2 Python repos
+        // on ALL four boards, so the top_stars count must be 2, not 8.
+        let py = langs.iter().find(|x| x["language"] == "Python").unwrap();
+        assert_eq!(py["count"], 2);
+        // The advertised count must equal the number of items the
+        // language-filtered leaderboard returns.
+        let (_, body) = get(
+            state.clone(),
+            "/api/leaderboard/top?metric=stars&language=Python",
+            Some(cookie.clone()),
+        )
+        .await;
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            v["items"].as_array().unwrap().len(),
+            py["count"].as_i64().unwrap() as usize
+        );
+        // Per-board language counts.
+        let (status, body) =
+            get(state.clone(), "/api/languages?board=top_forks", Some(cookie.clone())).await;
+        assert_eq!(status, StatusCode::OK);
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let py = v
             .as_array()
             .unwrap()
             .iter()
-            .map(|x| x["language"].as_str().unwrap())
-            .collect();
-        assert!(langs.contains(&"Python") && langs.contains(&"Rust"));
+            .find(|x| x["language"] == "Python")
+            .cloned()
+            .unwrap();
+        assert_eq!(py["count"], 2);
+        // Invalid board is rejected.
+        let (status, _) =
+            get(state.clone(), "/api/languages?board=bogus", Some(cookie.clone())).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
 
         let (_, body) = get(state.clone(), "/api/meta", Some(cookie.clone())).await;
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
