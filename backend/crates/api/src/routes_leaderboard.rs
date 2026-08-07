@@ -157,11 +157,10 @@ fn parse_topic_mode(raw: Option<&str>) -> Result<TopicMode, ()> {
 /// Backward compat:
 /// - Legacy `language` → `LeaderboardFilter.language` (primary equality on
 ///   `repos.language`). Works even when `language_names` is empty.
-/// - Multi-select `languages` → `LeaderboardFilter.languages` (OR on
-///   `language_names`).
+/// - Multi-select `languages` → OR on `language_names` **or** primary
+///   `repos.language` (so facet chips work before full share enrichment).
 /// - When only legacy `language` is present, response still echoes it under
-///   `languages_filter` for newer clients; it is **not** also bound as the
-///   multi-lang SQL filter (would false-negative on empty `language_names`).
+///   `languages_filter`; it binds primary-equality only (not multi-array).
 struct ParsedFilters {
     language: Option<String>,
     /// Multi-language filter as provided by `languages=` query (not mirrored).
@@ -218,7 +217,20 @@ fn to_items(
 ) -> Vec<LeaderboardItem> {
     rows.into_iter()
         .map(|r| {
-            let languages = languages_from_json(&r.languages);
+            let mut languages = languages_from_json(&r.languages);
+            // Until full language-share enrichment is populated for every repo,
+            // fall back to the primary `language` so chips/filters/UI stay usable.
+            if languages.is_empty() {
+                if let Some(ref lang) = r.language {
+                    if !lang.is_empty() {
+                        languages.push(LanguageShareDto {
+                            name: lang.clone(),
+                            pct: 100.0,
+                            bytes: None,
+                        });
+                    }
+                }
+            }
             let tracked_by_me = tracked.contains(&r.full_name);
             LeaderboardItem {
                 rank: r.rank,

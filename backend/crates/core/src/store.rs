@@ -126,7 +126,11 @@ pub async fn top_by_stars(
            FROM snapshots s JOIN repos r ON r.id = s.repo_id
            WHERE s.snapshot_date = $1 AND s.board = 'top_stars'
              AND ($2::text IS NULL OR r.language = $2)
-             AND ($3::text[] IS NULL OR r.language_names && $3)
+             AND (
+               $3::text[] IS NULL
+               OR r.language_names && $3
+               OR r.language = ANY($3)
+             )
              AND (
                $4::text[] IS NULL
                OR ($5 = 'and' AND r.topics @> $4)
@@ -178,7 +182,11 @@ pub async fn top_by_forks(
            FROM snapshots s JOIN repos r ON r.id = s.repo_id
            WHERE s.snapshot_date = $1 AND s.board = 'top_forks'
              AND ($2::text IS NULL OR r.language = $2)
-             AND ($3::text[] IS NULL OR r.language_names && $3)
+             AND (
+               $3::text[] IS NULL
+               OR r.language_names && $3
+               OR r.language = ANY($3)
+             )
              AND (
                $4::text[] IS NULL
                OR ($5 = 'and' AND r.topics @> $4)
@@ -230,7 +238,11 @@ pub async fn top_by_watchers(
            FROM snapshots s JOIN repos r ON r.id = s.repo_id
            WHERE s.snapshot_date = $1 AND s.board = 'top_watchers'
              AND ($2::text IS NULL OR r.language = $2)
-             AND ($3::text[] IS NULL OR r.language_names && $3)
+             AND (
+               $3::text[] IS NULL
+               OR r.language_names && $3
+               OR r.language = ANY($3)
+             )
              AND (
                $4::text[] IS NULL
                OR ($5 = 'and' AND r.topics @> $4)
@@ -282,7 +294,11 @@ pub async fn trending(
            FROM snapshots s JOIN repos r ON r.id = s.repo_id
            WHERE s.snapshot_date = $1 AND s.board = 'trending_daily'
              AND ($2::text IS NULL OR r.language = $2)
-             AND ($3::text[] IS NULL OR r.language_names && $3)
+             AND (
+               $3::text[] IS NULL
+               OR r.language_names && $3
+               OR r.language = ANY($3)
+             )
              AND (
                $4::text[] IS NULL
                OR ($5 = 'and' AND r.topics @> $4)
@@ -536,7 +552,11 @@ pub async fn list_tracked(
            ) s ON true
            WHERE t.user_id = $1
              AND ($2::text IS NULL OR r.language = $2)
-             AND ($3::text[] IS NULL OR r.language_names && $3)
+             AND (
+               $3::text[] IS NULL
+               OR r.language_names && $3
+               OR r.language = ANY($3)
+             )
              AND (
                $4::text[] IS NULL
                OR ($5 = 'and' AND r.topics @> $4)
@@ -1038,6 +1058,63 @@ mod tests {
             rows.iter().map(|r| r.full_name.clone()).collect::<Vec<_>>(),
             vec!["langf/py_rs", "langf/go"]
         );
+    }
+
+    /// Multi-language filter must match primary `repos.language` even when
+    /// `language_names` is empty (common before full languages enrichment).
+    #[tokio::test]
+    #[serial]
+    async fn languages_filter_matches_primary_language_when_names_empty() {
+        let pool = test_pool().await;
+        let date = NaiveDate::from_ymd_opt(2099, 2, 14).unwrap();
+        sqlx::query(
+            "DELETE FROM snapshots WHERE repo_id IN (SELECT id FROM repos WHERE full_name LIKE 'primlang/%')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("DELETE FROM repos WHERE full_name LIKE 'primlang/%'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM snapshots WHERE snapshot_date = $1")
+            .bind(date)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        for (name, lang, stars) in [
+            ("primlang/py", Some("Python"), 300),
+            ("primlang/rs", Some("Rust"), 200),
+            ("primlang/none", None, 100),
+        ] {
+            let r = repo(name, lang);
+            assert!(r.language_names.is_empty());
+            let id = upsert_repo(&pool, &r, date).await.unwrap();
+            upsert_snapshot(
+                &pool,
+                id,
+                date,
+                Board::TopStars,
+                &SnapshotInput {
+                    stars,
+                    forks: 0,
+                    watchers: None,
+                    stars_today: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        let langs = vec!["Python".to_string()];
+        let filter = LeaderboardFilter {
+            languages: Some(&langs),
+            ..LeaderboardFilter::empty()
+        };
+        let rows = top_by_stars(&pool, date, filter, 100).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].full_name, "primlang/py");
     }
 
     #[tokio::test]
