@@ -40,7 +40,10 @@ export default function App() {
 
   if (auth.kind === "loading") {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-neutral-950 text-neutral-500">
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ color: "var(--muted)", background: "var(--bg)" }}
+      >
         Loading…
       </div>
     );

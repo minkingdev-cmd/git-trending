@@ -4,6 +4,17 @@ import LeaderboardTable from "./LeaderboardTable";
 import RepoHistoryPanel from "./RepoHistoryPanel";
 import { api, UnauthorizedError } from "../api";
 import type { LanguageOption, LeaderboardResponse, MetaResponse } from "../types";
+import {
+  applyDensityClasses,
+  applyTheme,
+  getPreferredTheme,
+  readDensity,
+  readShowDesc,
+  writeDensity,
+  writeShowDesc,
+  type Density,
+  type Theme,
+} from "../theme";
 
 interface Props {
   username: string;
@@ -45,6 +56,19 @@ export default function Leaderboard({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [historyRepo, setHistoryRepo] = useState<string | null>(null);
+  const [theme, setTheme] = useState<Theme>(() => getPreferredTheme());
+  const [density, setDensity] = useState<Density>(() => readDensity());
+  const [showDesc, setShowDesc] = useState(() => readShowDesc());
+
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+
+  useEffect(() => {
+    applyDensityClasses(density, showDesc);
+    writeDensity(density);
+    writeShowDesc(showDesc);
+  }, [density, showDesc]);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -55,12 +79,25 @@ export default function Leaderboard({
     window.history.replaceState(null, "", `?${params.toString()}`);
   }, [board, metric, lang, date]);
 
+  // Backend board matching the current view; language counts are scoped per
+  // board so they match what the filtered leaderboard actually returns.
+  const backendBoard = board === "top" ? `top_${metric}` : "trending_daily";
+
   useEffect(() => {
-    api<LanguageOption[]>("/api/languages")
-      .then(setLanguages)
+    const dateQuery = date ? `&date=${encodeURIComponent(date)}` : "";
+    api<LanguageOption[]>(`/api/languages?board=${backendBoard}${dateQuery}`)
+      .then((ls) => {
+        setLanguages(ls);
+        // Drop the language filter if the selected language has no entries
+        // on the newly selected board/date.
+        setLang((cur) => (cur && !ls.some((l) => l.language === cur) ? "" : cur));
+      })
       .catch((e) => {
         if (e instanceof UnauthorizedError) onUnauthorized?.();
       });
+  }, [backendBoard, date, onUnauthorized]);
+
+  useEffect(() => {
     api<MetaResponse>("/api/meta")
       .then((m) => setDates(m.dates ?? []))
       .catch((e) => {
@@ -95,28 +132,53 @@ export default function Leaderboard({
   }, [load]);
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100">
-      <div className="mx-auto max-w-5xl space-y-4 p-6">
-        <header className="flex items-center justify-between">
-          <h1 className="text-xl font-semibold">GH Trending</h1>
-          <div className="flex items-center gap-3 text-sm text-neutral-400">
-            {data?.date && <span>数据截至 {data.date}</span>}
-            <span>{username}</span>
-            {isAdmin && onOpenAdmin && (
-              <button
-                type="button"
-                onClick={onOpenAdmin}
-                className="text-neutral-300 hover:text-white"
-              >
-                管理
-              </button>
-            )}
-            <button type="button" onClick={onLogout} className="text-neutral-300 hover:text-white">
-              登出
+    <div className="page">
+      <header
+        className="flex items-center justify-between gap-3"
+        style={{ marginBottom: 18 }}
+      >
+        <h1
+          className="m-0 text-[22px] font-semibold tracking-tight"
+          style={{ color: "var(--text)" }}
+        >
+          GH Trending
+        </h1>
+        <div
+          className="flex flex-wrap items-center gap-3.5 text-[13px]"
+          style={{ color: "var(--text-3)" }}
+        >
+          <div className="theme-toggle" role="group" aria-label="主题">
+            <button
+              type="button"
+              className={theme === "light" ? "active" : undefined}
+              onClick={() => setTheme("light")}
+              title="浅色主题"
+            >
+              ☀ Light
+            </button>
+            <button
+              type="button"
+              className={theme === "dark" ? "active" : undefined}
+              onClick={() => setTheme("dark")}
+              title="深色主题"
+            >
+              ☾ Dark
             </button>
           </div>
-        </header>
+          {data?.date && <span>数据截至 {data.date}</span>}
+          <span>{username}</span>
+          {isAdmin && onOpenAdmin && (
+            <button type="button" onClick={onOpenAdmin} className="header-link">
+              管理
+            </button>
+          )}
+          <button type="button" onClick={onLogout} className="header-link">
+            登出
+          </button>
+        </div>
+      </header>
 
+      <div className="space-y-4">
         <Controls
           board={board}
           metric={metric}
@@ -124,31 +186,34 @@ export default function Leaderboard({
           languages={languages}
           date={date}
           dates={dates}
+          density={density}
+          showDesc={showDesc}
           onBoard={setBoard}
           onMetric={setMetric}
           onLanguage={setLang}
           onDate={setDate}
+          onDensity={setDensity}
+          onShowDesc={setShowDesc}
         />
 
         {loading && (
           <div className="space-y-2 py-4" aria-busy="true" aria-label="加载中">
             {[1, 2, 3, 4, 5].map((i) => (
-              <div
-                key={i}
-                className="h-10 animate-pulse rounded bg-neutral-900"
-                style={{ opacity: 1 - i * 0.12 }}
-              />
+              <div key={i} className="skeleton-row" style={{ opacity: 1 - i * 0.12 }} />
             ))}
           </div>
         )}
         {error && (
-          <div className="py-8 text-center space-y-2">
-            <p className="text-red-400">{error}</p>
-            <p className="text-sm text-neutral-500">今日抓取可能未完成，可稍后重试或检查 collector。</p>
+          <div className="space-y-2 py-8 text-center">
+            <p style={{ color: "var(--danger)" }}>{error}</p>
+            <p className="text-sm" style={{ color: "var(--muted)" }}>
+              今日抓取可能未完成，可稍后重试或检查 collector。
+            </p>
             <button
               type="button"
               onClick={() => void load()}
-              className="text-sm text-emerald-400 hover:underline"
+              className="text-sm hover:underline"
+              style={{ color: "var(--link)" }}
             >
               重试
             </button>
