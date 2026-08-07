@@ -6,6 +6,8 @@ pub struct Settings {
     pub database_url: String,
     pub jwt_secret: String,
     pub github_token: Option<String>,
+    /// GitHub REST API base (override with `GITHUB_API_BASE` for tests / proxies).
+    pub github_api_base: String,
     pub languages: Vec<String>,
     pub collect_time: String,
     pub cookie_secure: bool,
@@ -34,6 +36,9 @@ impl Settings {
             database_url,
             jwt_secret,
             github_token: get("GITHUB_TOKEN").filter(|s| !s.is_empty()),
+            github_api_base: get("GITHUB_API_BASE")
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "https://api.github.com".into()),
             languages: parse_languages(&languages_raw),
             collect_time,
             cookie_secure: get("COOKIE_SECURE").map(|v| v == "true").unwrap_or(false),
@@ -94,6 +99,7 @@ mod tests {
         assert!(s.languages.contains(&"Rust".to_string()));
         assert!(!s.cookie_secure);
         assert!(s.github_token.is_none());
+        assert_eq!(s.github_api_base, "https://api.github.com");
     }
 
     #[test]

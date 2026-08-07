@@ -83,7 +83,7 @@ pub struct LeaderboardItem {
     pub forks: i32,
     pub watchers: Option<i32>,
     pub stars_today: Option<i32>,
-    /// Always false until Task 7/8 wires user tracking.
+    /// True when the authenticated user tracks this repo.
     pub tracked_by_me: bool,
 }
 
@@ -205,17 +205,21 @@ fn parse_filters(
     })
 }
 
-fn languages_from_json(v: &serde_json::Value) -> Vec<LanguageShareDto> {
+pub fn languages_from_json(v: &serde_json::Value) -> Vec<LanguageShareDto> {
     match serde_json::from_value::<Vec<LanguageShare>>(v.clone()) {
         Ok(shares) => shares.into_iter().map(LanguageShareDto::from).collect(),
         Err(_) => vec![],
     }
 }
 
-fn to_items(rows: Vec<ght_core::models::LeaderboardRow>) -> Vec<LeaderboardItem> {
+fn to_items(
+    rows: Vec<ght_core::models::LeaderboardRow>,
+    tracked: &std::collections::HashSet<String>,
+) -> Vec<LeaderboardItem> {
     rows.into_iter()
         .map(|r| {
             let languages = languages_from_json(&r.languages);
+            let tracked_by_me = tracked.contains(&r.full_name);
             LeaderboardItem {
                 rank: r.rank,
                 full_name: r.full_name,
@@ -228,7 +232,7 @@ fn to_items(rows: Vec<ght_core::models::LeaderboardRow>) -> Vec<LeaderboardItem>
                 forks: r.forks,
                 watchers: r.watchers,
                 stars_today: r.stars_today,
-                tracked_by_me: false,
+                tracked_by_me,
             }
         })
         .collect()
@@ -298,8 +302,9 @@ fn ok_resp(
     date: chrono::NaiveDate,
     parsed: &ParsedFilters,
     rows: Vec<ght_core::models::LeaderboardRow>,
+    tracked: &std::collections::HashSet<String>,
 ) -> LeaderboardResp {
-    let items = to_items(rows);
+    let items = to_items(rows, tracked);
     let (topic_facets, language_facets) = facets_from_items(&items);
     LeaderboardResp {
         date: date.format("%Y-%m-%d").to_string(),
@@ -354,7 +359,7 @@ pub fn router() -> Router<AppState> {
 
 async fn top(
     State(state): State<AppState>,
-    _auth: RequireAuth,
+    RequireAuth(claims): RequireAuth,
     Query(params): Query<TopParams>,
 ) -> impl IntoResponse {
     let board = match params.metric.as_str() {
@@ -409,15 +414,18 @@ async fn top(
         Board::TopWatchers => store::top_by_watchers(&state.pool, date, filter, 100).await,
         _ => unreachable!(),
     };
+    let tracked = crate::routes_track::tracked_full_names(&state.pool, claims.sub)
+        .await
+        .unwrap_or_default();
     match rows {
-        Ok(rows) => Json(ok_resp(board, date, &parsed, rows)).into_response(),
+        Ok(rows) => Json(ok_resp(board, date, &parsed, rows, &tracked)).into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 
 async fn trending(
     State(state): State<AppState>,
-    _auth: RequireAuth,
+    RequireAuth(claims): RequireAuth,
     Query(params): Query<TrendingParams>,
 ) -> impl IntoResponse {
     let board = Board::TrendingDaily;
@@ -455,8 +463,11 @@ async fn trending(
         None => return Json(empty_resp(board, &parsed)).into_response(),
     };
     let filter = store_filter(&parsed);
+    let tracked = crate::routes_track::tracked_full_names(&state.pool, claims.sub)
+        .await
+        .unwrap_or_default();
     match store::trending(&state.pool, date, filter, 100).await {
-        Ok(rows) => Json(ok_resp(board, date, &parsed, rows)).into_response(),
+        Ok(rows) => Json(ok_resp(board, date, &parsed, rows, &tracked)).into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
@@ -578,10 +589,12 @@ mod tests {
             .await
             .expect("test db unreachable; run `make db`");
         db::migrate(&pool).await.unwrap();
-        sqlx::query("TRUNCATE repos, snapshots, users, invite_codes, refresh_tokens")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "TRUNCATE repos, snapshots, users, invite_codes, refresh_tokens, user_tracked_repos",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         let settings = ght_core::config::Settings::from_map(|k| match k {
             "DATABASE_URL" => Some(url.clone()),
             "JWT_SECRET" => Some("test-secret".into()),

@@ -61,7 +61,7 @@ async fn snapshot_dates(
 
 async fn repo_history(
     State(state): State<AppState>,
-    _auth: RequireAuth,
+    RequireAuth(claims): RequireAuth,
     Query(params): Query<HistoryParams>,
 ) -> impl IntoResponse {
     if params.full_name.is_empty() || !params.full_name.contains('/') {
@@ -72,6 +72,21 @@ async fn repo_history(
             .into_response();
     }
     let board = parse_board(params.board.as_deref());
+    // Personal board: only the user who tracks the repo may read tracked_daily history.
+    if board == Board::TrackedDaily {
+        let allowed =
+            match crate::routes_track::tracked_full_names(&state.pool, claims.sub).await {
+                Ok(set) => set.contains(&params.full_name),
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            };
+        if !allowed {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({"error": "tracked_daily history only for own tracked repos"})),
+            )
+                .into_response();
+        }
+    }
     let days = params.days.unwrap_or(30).clamp(1, 365);
     let to = Utc::now().date_naive();
     let from = to - Duration::days(days);
@@ -135,10 +150,12 @@ mod tests {
             .await
             .expect("test db unreachable; run `make db`");
         db::migrate(&pool).await.unwrap();
-        sqlx::query("TRUNCATE repos, snapshots, users, invite_codes, refresh_tokens")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "TRUNCATE repos, snapshots, users, invite_codes, refresh_tokens, user_tracked_repos",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         let settings = ght_core::config::Settings::from_map(|k| match k {
             "DATABASE_URL" => Some(url.clone()),
             "JWT_SECRET" => Some("test-secret".into()),

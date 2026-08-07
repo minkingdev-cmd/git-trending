@@ -20,7 +20,9 @@ serde_json = { workspace = true }
 jsonwebtoken = { workspace = true }
 bcrypt = { workspace = true }
 thiserror = { workspace = true }
+reqwest = { workspace = true }
 
 [dev-dependencies]
 tower = { workspace = true }
 serial_test = { workspace = true }
+wiremock = { workspace = true }

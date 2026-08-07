@@ -850,6 +850,7 @@ dependencies = [
  "ght-core",
  "http",
  "jsonwebtoken",
+ "reqwest",
  "serde",
  "serde_json",
  "serial_test",
@@ -860,6 +861,7 @@ dependencies = [
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
+ "wiremock",
 ]
 
 [[package]]
