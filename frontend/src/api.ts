@@ -191,6 +191,24 @@ export interface ListTrackedParams {
   languages?: string[];
   licenses?: string[];
   topicMode?: "and" | "or";
+  /** Default true on server; pass false to include archived. */
+  excludeArchived?: boolean;
+  /** Only repos with pushed_at within N days. */
+  activeWithin?: number | null;
+}
+
+/** Append health / board filter params (shared by leaderboard + tracked). */
+export function appendHealthFilterParams(
+  qs: URLSearchParams,
+  opts: { excludeArchived?: boolean; activeWithin?: number | null },
+): void {
+  // Server defaults exclude_archived=true; only send when disabling.
+  if (opts.excludeArchived === false) {
+    qs.set("exclude_archived", "0");
+  }
+  if (opts.activeWithin != null && opts.activeWithin > 0) {
+    qs.set("active_within", String(opts.activeWithin));
+  }
 }
 
 export async function listTrackedRepos(
@@ -204,6 +222,10 @@ export async function listTrackedRepos(
   if (params.topicMode && params.topicMode !== "and") {
     qs.set("topic_mode", params.topicMode);
   }
+  appendHealthFilterParams(qs, {
+    excludeArchived: params.excludeArchived,
+    activeWithin: params.activeWithin,
+  });
   const q = qs.toString();
   const res = await api<TrackedListResponse>(
     `/api/repos/tracked${q ? `?${q}` : ""}`,

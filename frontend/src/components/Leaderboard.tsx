@@ -6,6 +6,7 @@ import RepoHistoryPanel from "./RepoHistoryPanel";
 import TrackedPanel from "./TrackedPanel";
 import {
   api,
+  appendHealthFilterParams,
   listTrackedRepos,
   untrackRepo,
   UnauthorizedError,
@@ -110,6 +111,10 @@ export default function Leaderboard({
   const [topicMode, setTopicMode] = useState<TopicMode>(initial.topicMode);
   const [languages, setLanguages] = useState<string[]>(initial.languages);
   const [licenses, setLicenses] = useState<string[]>(initial.licenses);
+  const [excludeArchived, setExcludeArchived] = useState(initial.excludeArchived);
+  const [activeWithin, setActiveWithin] = useState<number | null>(
+    initial.activeWithin,
+  );
   const [dates, setDates] = useState<string[]>([]);
   const [data, setData] = useState<LeaderboardResponse | null>(null);
   const [trackedItems, setTrackedItems] = useState<TrackedRepoItem[]>([]);
@@ -144,9 +149,22 @@ export default function Leaderboard({
       topicMode,
       languages,
       licenses,
+      excludeArchived,
+      activeWithin,
     };
     window.history.replaceState(null, "", buildSearch(state));
-  }, [board, metric, date, q, topics, topicMode, languages, licenses]);
+  }, [
+    board,
+    metric,
+    date,
+    q,
+    topics,
+    topicMode,
+    languages,
+    licenses,
+    excludeArchived,
+    activeWithin,
+  ]);
 
   useEffect(() => {
     api<MetaResponse>("/api/meta")
@@ -168,6 +186,8 @@ export default function Leaderboard({
           languages,
           licenses,
           topicMode,
+          excludeArchived,
+          activeWithin,
         });
         setTrackedItems(items);
         setData(null);
@@ -179,6 +199,7 @@ export default function Leaderboard({
         if (topicMode !== "and") params.set("topic_mode", topicMode);
         if (languages.length) params.set("languages", languages.join(","));
         if (licenses.length) params.set("licenses", licenses.join(","));
+        appendHealthFilterParams(params, { excludeArchived, activeWithin });
         const qs = params.toString();
         const path =
           board === "top"
@@ -196,7 +217,19 @@ export default function Leaderboard({
     } finally {
       setLoading(false);
     }
-  }, [board, metric, date, q, topics, topicMode, languages, licenses, onUnauthorized]);
+  }, [
+    board,
+    metric,
+    date,
+    q,
+    topics,
+    topicMode,
+    languages,
+    licenses,
+    excludeArchived,
+    activeWithin,
+    onUnauthorized,
+  ]);
 
   useEffect(() => {
     void load();
@@ -380,6 +413,8 @@ export default function Leaderboard({
           topicMode={topicMode}
           languages={languages}
           licenses={licenses}
+          excludeArchived={excludeArchived}
+          activeWithin={activeWithin}
           topicFacets={topicFacets}
           languageFacets={languageFacets}
           licenseFacets={licenseFacets}
@@ -393,6 +428,8 @@ export default function Leaderboard({
           onTopicMode={setTopicMode}
           onToggleLanguage={onToggleLanguage}
           onToggleLicense={onToggleLicense}
+          onExcludeArchived={setExcludeArchived}
+          onActiveWithin={setActiveWithin}
           onClearFilters={onClearFilters}
           onDensity={setDensity}
           onShowDesc={setShowDesc}

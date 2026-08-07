@@ -179,6 +179,25 @@ describe("track helpers", () => {
     expect(url).toContain("languages=Rust");
     expect(url).toContain("licenses=MIT");
     expect(url).toContain("topic_mode=or");
+    // Default excludeArchived not sent (server default true).
+    expect(url).not.toContain("exclude_archived");
+  });
+
+  it("listTrackedRepos sends health filters", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ items: [] }), { status: 200 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await listTrackedRepos({
+      excludeArchived: false,
+      activeWithin: 90,
+    });
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toContain("exclude_archived=0");
+    expect(url).toContain("active_within=90");
   });
 
   it("throws ApiError on track limit", async () => {

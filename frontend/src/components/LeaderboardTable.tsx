@@ -3,6 +3,7 @@ import { compact } from "../api";
 import { formatPct, langColor } from "../langColors";
 import type { LanguageShare, LeaderboardItem } from "../types";
 import type { BoardKind, Metric } from "../urlState";
+import HealthBadge from "./HealthBadge";
 
 interface Props {
   items: LeaderboardItem[];
@@ -277,6 +278,14 @@ export default function LeaderboardTable({
                           <span className="name">{item.full_name}</span>
                         )}
                       </a>
+                      <HealthBadge
+                        health={item.health}
+                        pushed_at={item.pushed_at}
+                        open_issues_count={item.open_issues_count}
+                        latest_release_at={item.latest_release_at}
+                        created_at_gh={item.created_at_gh}
+                        archived={item.archived}
+                      />
                       {item.tracked_by_me && (
                         <span className="badge-track" title="已在「我的跟踪」">
                           已跟踪

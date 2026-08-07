@@ -4,7 +4,20 @@ export interface LanguageShare {
   bytes?: number;
 }
 
-export interface LeaderboardItem {
+/** Runtime health from API: active | stale | archived | unknown. */
+export type HealthStatus = "active" | "stale" | "archived" | "unknown";
+
+/** Shared health fields on leaderboard / tracked rows. */
+export interface RepoHealthFields {
+  pushed_at?: string | null;
+  archived?: boolean;
+  open_issues_count?: number | null;
+  created_at_gh?: string | null;
+  latest_release_at?: string | null;
+  health?: HealthStatus | string;
+}
+
+export interface LeaderboardItem extends RepoHealthFields {
   rank: number;
   full_name: string;
   html_url: string;
@@ -102,7 +115,7 @@ export interface UserItem {
 /** Status of a user-tracked repo relative to public boards / snapshots. */
 export type TrackedStatus = "on_board" | "tracking" | "pending";
 
-export interface TrackedRepoItem {
+export interface TrackedRepoItem extends RepoHealthFields {
   full_name: string;
   html_url: string;
   description: string | null;

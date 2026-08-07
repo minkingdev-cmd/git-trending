@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSearch,
+  DEFAULT_URL_STATE,
   hasActiveFilters,
   parseCsvList,
   parseSearch,
@@ -36,6 +37,8 @@ describe("parseSearch", () => {
     expect(s.q).toBe("");
     expect(s.topics).toEqual([]);
     expect(s.languages).toEqual([]);
+    expect(s.excludeArchived).toBe(true);
+    expect(s.activeWithin).toBeNull();
   });
 
   it("parses board top + metric + date + q + languages", () => {
@@ -68,6 +71,34 @@ describe("parseSearch", () => {
   it("accepts search without leading ?", () => {
     expect(parseSearch("topics=ai,llm&topic_mode=or").topics).toEqual(["ai", "llm"]);
   });
+
+  it("defaults excludeArchived true and activeWithin null", () => {
+    const s = parseSearch("?board=trending");
+    expect(s.excludeArchived).toBe(true);
+    expect(s.activeWithin).toBeNull();
+  });
+
+  it("parses exclude_archived=0 as false", () => {
+    expect(parseSearch("?exclude_archived=0").excludeArchived).toBe(false);
+    expect(parseSearch("?exclude_archived=false").excludeArchived).toBe(false);
+    expect(parseSearch("?exclude_archived=no").excludeArchived).toBe(false);
+  });
+
+  it("parses exclude_archived=1/true as true", () => {
+    expect(parseSearch("?exclude_archived=1").excludeArchived).toBe(true);
+    expect(parseSearch("?exclude_archived=true").excludeArchived).toBe(true);
+  });
+
+  it("parses active_within days", () => {
+    expect(parseSearch("?active_within=90").activeWithin).toBe(90);
+    expect(parseSearch("?active_within=7").activeWithin).toBe(7);
+  });
+
+  it("ignores invalid or non-positive active_within", () => {
+    expect(parseSearch("?active_within=0").activeWithin).toBeNull();
+    expect(parseSearch("?active_within=-5").activeWithin).toBeNull();
+    expect(parseSearch("?active_within=abc").activeWithin).toBeNull();
+  });
 });
 
 describe("buildSearch", () => {
@@ -81,6 +112,8 @@ describe("buildSearch", () => {
       topicMode: "and",
       languages: [],
       licenses: [],
+      excludeArchived: true,
+      activeWithin: null,
     };
     expect(buildSearch(state)).toBe("?board=trending");
   });
@@ -95,6 +128,8 @@ describe("buildSearch", () => {
       topicMode: "or",
       languages: ["Python", "TypeScript"],
       licenses: ["MIT", "Apache-2.0"],
+      excludeArchived: true,
+      activeWithin: null,
     });
     const params = new URLSearchParams(s.slice(1));
     expect(params.get("board")).toBe("top");
@@ -105,6 +140,26 @@ describe("buildSearch", () => {
     expect(params.get("topic_mode")).toBe("or");
     expect(params.get("languages")).toBe("Python,TypeScript");
     expect(params.get("licenses")).toBe("MIT,Apache-2.0");
+    expect(params.get("exclude_archived")).toBeNull();
+    expect(params.get("active_within")).toBeNull();
+  });
+
+  it("writes exclude_archived=0 when disabled", () => {
+    const s = buildSearch({
+      ...DEFAULT_URL_STATE,
+      excludeArchived: false,
+    });
+    const params = new URLSearchParams(s.slice(1));
+    expect(params.get("exclude_archived")).toBe("0");
+  });
+
+  it("writes active_within when set", () => {
+    const s = buildSearch({
+      ...DEFAULT_URL_STATE,
+      activeWithin: 90,
+    });
+    const params = new URLSearchParams(s.slice(1));
+    expect(params.get("active_within")).toBe("90");
   });
 
   it("round-trips with parseSearch", () => {
@@ -117,11 +172,13 @@ describe("buildSearch", () => {
       topicMode: "or",
       languages: ["Rust"],
       licenses: ["MIT"],
+      excludeArchived: true,
+      activeWithin: null,
     };
     expect(parseSearch(buildSearch(original))).toEqual(original);
   });
 
-  it("round-trips board=tracked", () => {
+  it("round-trips board=tracked with health filters", () => {
     const original: UrlState = {
       board: "tracked",
       metric: "stars",
@@ -131,6 +188,8 @@ describe("buildSearch", () => {
       topicMode: "and",
       languages: ["Go"],
       licenses: [],
+      excludeArchived: false,
+      activeWithin: 90,
     };
     expect(parseSearch(buildSearch(original))).toEqual(original);
   });

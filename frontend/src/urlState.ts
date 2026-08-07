@@ -11,6 +11,10 @@ export interface UrlState {
   topicMode: TopicMode;
   languages: string[];
   licenses: string[];
+  /** Default true: exclude archived repos. URL: omit or 1; pass exclude_archived=0 to disable. */
+  excludeArchived: boolean;
+  /** Optional day window for pushed_at; null = no filter. URL: active_within=N. */
+  activeWithin: number | null;
 }
 
 export const DEFAULT_URL_STATE: UrlState = {
@@ -22,7 +26,28 @@ export const DEFAULT_URL_STATE: UrlState = {
   topicMode: "and",
   languages: [],
   licenses: [],
+  excludeArchived: true,
+  activeWithin: null,
 };
+
+/** Parse exclude_archived: missing/empty/1/true → true; 0/false/no → false. */
+export function parseExcludeArchived(raw: string | null): boolean {
+  if (raw == null) return true;
+  const s = raw.trim().toLowerCase();
+  if (s === "" || s === "1" || s === "true" || s === "yes") return true;
+  if (s === "0" || s === "false" || s === "no") return false;
+  return true;
+}
+
+/** Parse active_within days; missing/empty/invalid/non-positive → null. */
+export function parseActiveWithin(raw: string | null): number | null {
+  if (raw == null) return null;
+  const s = raw.trim();
+  if (!s) return null;
+  const n = Number.parseInt(s, 10);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
 
 /** Parse comma-separated list; trim, drop empty; optionally lowercase; dedupe. */
 export function parseCsvList(raw: string | null, lowercase = false): string[] {
@@ -87,6 +112,8 @@ export function parseSearch(search: string): UrlState {
     topicMode,
     languages,
     licenses: parseCsvList(params.get("licenses"), false),
+    excludeArchived: parseExcludeArchived(params.get("exclude_archived")),
+    activeWithin: parseActiveWithin(params.get("active_within")),
   };
 }
 
@@ -103,6 +130,11 @@ export function buildSearch(state: UrlState): string {
   if (state.topicMode !== "and") params.set("topic_mode", state.topicMode);
   if (state.languages.length) params.set("languages", toCsv(state.languages));
   if (state.licenses.length) params.set("licenses", toCsv(state.licenses));
+  // Default excludeArchived=true is omitted; only write when disabled.
+  if (!state.excludeArchived) params.set("exclude_archived", "0");
+  if (state.activeWithin != null && state.activeWithin > 0) {
+    params.set("active_within", String(state.activeWithin));
+  }
   const s = params.toString();
   return s ? `?${s}` : "?";
 }

@@ -1,5 +1,6 @@
 import { compact } from "../api";
 import type { TrackedRepoItem, TrackedStatus } from "../types";
+import HealthBadge from "./HealthBadge";
 
 interface Props {
   items: TrackedRepoItem[];
@@ -130,6 +131,14 @@ export default function TrackedPanel({
                   >
                     {item.full_name}
                   </a>
+                  <HealthBadge
+                    health={item.health}
+                    pushed_at={item.pushed_at}
+                    open_issues_count={item.open_issues_count}
+                    latest_release_at={item.latest_release_at}
+                    created_at_gh={item.created_at_gh}
+                    archived={item.archived}
+                  />
                   <span className={statusBadgeClass(st)}>{statusLabel(st)}</span>
                   {item.description && (
                     <div

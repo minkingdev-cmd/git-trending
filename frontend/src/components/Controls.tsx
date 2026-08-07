@@ -16,6 +16,9 @@ interface Props {
   topicMode: TopicMode;
   languages: string[];
   licenses: string[];
+  excludeArchived: boolean;
+  /** When set (e.g. 90), only repos active within N days. */
+  activeWithin: number | null;
   topicFacets: TopicFacet[];
   languageFacets: LanguageFacet[];
   licenseFacets: LicenseFacet[];
@@ -29,10 +32,14 @@ interface Props {
   onTopicMode: (mode: TopicMode) => void;
   onToggleLanguage: (lang: string) => void;
   onToggleLicense: (license: string) => void;
+  onExcludeArchived: (v: boolean) => void;
+  onActiveWithin: (days: number | null) => void;
   onClearFilters: () => void;
   onDensity: (d: Density) => void;
   onShowDesc: (show: boolean) => void;
 }
+
+const ACTIVE_WITHIN_DAYS = 90;
 
 export default function Controls({
   board,
@@ -44,6 +51,8 @@ export default function Controls({
   topicMode,
   languages,
   licenses,
+  excludeArchived,
+  activeWithin,
   topicFacets,
   languageFacets,
   licenseFacets,
@@ -57,6 +66,8 @@ export default function Controls({
   onTopicMode,
   onToggleLanguage,
   onToggleLicense,
+  onExcludeArchived,
+  onActiveWithin,
   onClearFilters,
   onDensity,
   onShowDesc,
@@ -192,6 +203,31 @@ export default function Controls({
             onChange={(e) => onShowDesc(e.target.checked)}
           />
           显示介绍
+        </label>
+
+        <label
+          className="toggle-chip"
+          title="默认排除已归档仓库；取消勾选可显示 archived"
+        >
+          <input
+            type="checkbox"
+            checked={excludeArchived}
+            onChange={(e) => onExcludeArchived(e.target.checked)}
+          />
+          排除已归档
+        </label>
+        <label
+          className="toggle-chip"
+          title={`仅显示最近 ${ACTIVE_WITHIN_DAYS} 天内有 push 且未归档的仓库`}
+        >
+          <input
+            type="checkbox"
+            checked={activeWithin === ACTIVE_WITHIN_DAYS}
+            onChange={(e) =>
+              onActiveWithin(e.target.checked ? ACTIVE_WITHIN_DAYS : null)
+            }
+          />
+          仅活跃({ACTIVE_WITHIN_DAYS}天)
         </label>
 
         <button

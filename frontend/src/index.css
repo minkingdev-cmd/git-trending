@@ -988,6 +988,57 @@ html[data-theme="light"] .chip.active .count {
   color: var(--text-3);
 }
 
+/* Health status pills: active=green, stale=amber, archived=gray, unknown=muted */
+.health-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 2px 6px;
+  border-radius: 999px;
+  vertical-align: middle;
+  margin-left: 6px;
+  flex-shrink: 0;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  cursor: help;
+  line-height: 1.2;
+}
+
+.health-badge:focus-visible {
+  outline: 2px solid var(--emerald-dim);
+  outline-offset: 1px;
+}
+
+.health-badge.active {
+  background: var(--emerald-bg);
+  border-color: var(--emerald-dim);
+  color: var(--link);
+}
+
+.health-badge.stale {
+  background: rgba(251, 191, 36, 0.12);
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.health-badge.archived {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text-3);
+}
+
+.health-badge.unknown {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--muted);
+}
+
+html[data-theme="light"] .health-badge.stale {
+  background: rgba(180, 83, 9, 0.1);
+}
+
 .tracked-panel {
   display: none;
   border: 1px solid var(--border);
