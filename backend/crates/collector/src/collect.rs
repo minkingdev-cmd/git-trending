@@ -406,7 +406,7 @@ mod tests {
 
     async fn test_pool() -> PgPool {
         let url = std::env::var("DATABASE_URL_TEST_COLLECTOR")
-            .unwrap_or_else(|_| "postgres://ght:ght@localhost:5433/ghtrending_test_collector".into());
+            .unwrap_or_else(|_| "postgres://postgres@localhost:5432/ghtrending_test_collector".into());
         let pool = db::pg_pool(&url).await.expect("test db unreachable; run `make db`");
         db::migrate(&pool).await.unwrap();
         sqlx::query(

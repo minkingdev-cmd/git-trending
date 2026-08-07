@@ -1,0 +1,2703 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GH Trending — 列表 v2 原型</title>
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("ght-theme");
+        if (t !== "light" && t !== "dark") {
+          t = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+        }
+        document.documentElement.setAttribute("data-theme", t);
+      } catch (e) {
+        document.documentElement.setAttribute("data-theme", "dark");
+      }
+    })();
+  </script>
+  <style>
+    :root {
+      --radius: 10px;
+      --page-pad-x: clamp(16px, 2.5vw, 40px);
+      --min-ui: 960px;
+      --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Noto Sans SC", sans-serif;
+      --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      color-scheme: dark;
+    }
+
+    /* Dark — deeper black base, high-contrast text (avoid muddy grays) */
+    html[data-theme="dark"],
+    html:not([data-theme]) {
+      color-scheme: dark;
+      --bg: #0a0a0b;
+      --bg-elevated: #121214;
+      --surface: #1a1a1e;
+      --surface-2: #222228;
+      --surface-hover: #26262c;
+      --border: #2e2e36;
+      --border-soft: #1e1e24;
+      /* Primary / secondary / tertiary: stay close to white for readability */
+      --text: #fafafa;
+      --text-2: #e4e4e7;
+      --text-3: #d4d4d8;
+      --muted: #a1a1aa;
+      --emerald: #4ade80;
+      --emerald-dim: #22c55e;
+      --emerald-bg: rgba(34, 197, 94, 0.14);
+      --amber: #fbbf24;
+      --danger: #f87171;
+      --chip: #1c1c22;
+      --chip-active: #14532d;
+      --chip-border: #3f3f46;
+      --link: #4ade80;
+      --pill-q-bg: #1e1b4b;
+      --pill-q-fg: #c7d2fe;
+      --pill-q-border: #3730a3;
+      --rank-1: #fbbf24;
+      --rank-2: #e4e4e7;
+      --rank-3: #d97706;
+      --avatar-from: #3f3f46;
+      --avatar-to: #27272a;
+      --modal-scrim: rgba(0, 0, 0, 0.78);
+      --table-head: rgba(18, 18, 20, 0.97);
+      --spark: #4ade80;
+      --bg-glow-1: rgba(74, 222, 128, 0.04);
+      --bg-glow-2: rgba(99, 102, 241, 0.035);
+      --bg-grad-top: #0c0c0e;
+      --bg-grad-bot: #050506;
+      --inset-shine: rgba(255, 255, 255, 0.04);
+      --shadow-modal: 0 24px 60px rgba(0, 0, 0, 0.65);
+    }
+
+    /* Light */
+    html[data-theme="light"] {
+      color-scheme: light;
+      --bg: #f4f5f7;
+      --bg-elevated: #ffffff;
+      --surface: #f0f2f5;
+      --surface-2: #e8ebf0;
+      --surface-hover: #eef1f6;
+      --border: #d8dce3;
+      --border-soft: #e6e9ef;
+      --text: #15181f;
+      --text-2: #3d4450;
+      --text-3: #6b7280;
+      --muted: #9ca3af;
+      --emerald: #0d9f6e;
+      --emerald-dim: #0b8a5e;
+      --emerald-bg: rgba(11, 138, 94, 0.1);
+      --amber: #b45309;
+      --danger: #dc2626;
+      --chip: #eef1f6;
+      --chip-active: #d1fae5;
+      --chip-border: #cfd5de;
+      --link: #0b8a5e;
+      --pill-q-bg: #eef2ff;
+      --pill-q-fg: #4338ca;
+      --pill-q-border: #c7d2fe;
+      --rank-1: #ca8a04;
+      --rank-2: #64748b;
+      --rank-3: #b45309;
+      --avatar-from: #cbd5e1;
+      --avatar-to: #94a3b8;
+      --modal-scrim: rgba(15, 23, 42, 0.4);
+      --table-head: rgba(255, 255, 255, 0.96);
+      --spark: #0b8a5e;
+      --bg-glow-1: rgba(16, 185, 129, 0.08);
+      --bg-glow-2: rgba(99, 102, 241, 0.06);
+      --bg-grad-top: #f8f9fb;
+      --bg-grad-bot: #eef0f4;
+      --inset-shine: rgba(255, 255, 255, 0.8);
+      --shadow-modal: 0 24px 50px rgba(15, 23, 42, 0.12);
+    }
+
+    * { box-sizing: border-box; }
+    html {
+      margin: 0;
+      /* allow horizontal scroll when viewport < min width */
+      overflow-x: auto;
+    }
+    body {
+      margin: 0;
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      min-width: var(--min-ui);
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      background-image:
+        radial-gradient(1200px 480px at 12% -10%, var(--bg-glow-1), transparent 55%),
+        radial-gradient(900px 420px at 88% 0%, var(--bg-glow-2), transparent 50%),
+        linear-gradient(180deg, var(--bg-grad-top) 0%, var(--bg) 32%, var(--bg-grad-bot) 100%);
+      background-attachment: fixed;
+      transition: background-color 0.2s ease, color 0.15s ease;
+    }
+
+    /* Full-width shell, fluid gutters, hard floor at --min-ui */
+    .page {
+      width: 100%;
+      min-width: var(--min-ui);
+      max-width: none;
+      margin: 0;
+      padding: 20px var(--page-pad-x) 72px;
+    }
+
+    /* Prototype banner */
+    .proto-banner {
+      margin-bottom: 18px;
+      padding: 12px 16px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg-elevated);
+      font-size: 13px;
+      color: var(--text-2);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 16px;
+      align-items: center;
+    }
+    .proto-banner strong { color: var(--amber); font-weight: 600; }
+    .proto-banner code {
+      font-family: var(--mono);
+      font-size: 11px;
+      background: var(--surface);
+      padding: 2px 7px;
+      border-radius: 5px;
+      color: var(--link);
+      border: 1px solid var(--border-soft);
+    }
+
+    /* Header */
+    header.top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    header.top h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+      color: var(--text);
+    }
+    header.top .meta {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font-size: 13px;
+      color: var(--text-3);
+    }
+    header.top .meta button.link {
+      background: none;
+      border: none;
+      color: var(--text-2);
+      cursor: pointer;
+      font-size: 13px;
+      padding: 0;
+    }
+    header.top .meta button.link:hover { color: var(--link); }
+
+    .theme-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 0;
+      padding: 3px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+    }
+    .theme-toggle button {
+      border: none;
+      background: transparent;
+      color: var(--text-3);
+      font-size: 12px;
+      padding: 5px 11px;
+      border-radius: 999px;
+      cursor: pointer;
+      line-height: 1.2;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .theme-toggle button:hover { color: var(--text); }
+    .theme-toggle button.active {
+      background: var(--bg-elevated);
+      color: var(--text);
+      font-weight: 600;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+      border: 1px solid var(--border-soft);
+    }
+    html[data-theme="light"] .theme-toggle button.active {
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+    }
+
+    /* Controls panel */
+    .controls {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 14px 16px;
+      margin-bottom: 4px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+    .controls-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px 12px;
+    }
+
+    .seg {
+      display: inline-flex;
+      padding: 3px;
+      background: var(--surface);
+      border: 1px solid var(--border-soft);
+      border-radius: 9px;
+      gap: 2px;
+    }
+    .seg button {
+      border: none;
+      background: transparent;
+      color: var(--text-3);
+      font-size: 13px;
+      padding: 6px 14px;
+      border-radius: 7px;
+      cursor: pointer;
+    }
+    .seg button:hover { color: var(--text); }
+    .seg button.active {
+      background: var(--emerald-dim);
+      color: #fff;
+      font-weight: 600;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    }
+
+    .metric-group {
+      display: inline-flex;
+      gap: 12px;
+      font-size: 13px;
+      color: var(--text-2);
+    }
+    .metric-group label {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+    }
+    .metric-group input { accent-color: var(--emerald-dim); }
+
+    select, .input {
+      font: inherit;
+      font-size: 13px;
+      color: var(--text);
+      background: var(--surface);
+      border: 1px solid var(--chip-border);
+      border-radius: 7px;
+      padding: 7px 11px;
+      outline: none;
+    }
+    select:focus, .input:focus {
+      border-color: var(--emerald-dim);
+      box-shadow: 0 0 0 3px rgba(18, 166, 106, 0.22);
+    }
+    select option { background: var(--surface); color: var(--text); }
+
+    .search-wrap {
+      position: relative;
+      flex: 1 1 280px;
+      min-width: 220px;
+      max-width: 480px;
+    }
+    .search-wrap .icon {
+      position: absolute;
+      left: 11px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+      font-size: 14px;
+      pointer-events: none;
+    }
+    .search-wrap .input {
+      width: 100%;
+      padding-left: 32px;
+      background: var(--surface);
+    }
+
+    .toggle-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-2);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 6px 11px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .toggle-chip input { accent-color: var(--emerald-dim); margin: 0; }
+    .toggle-chip:has(input:checked) {
+      border-color: var(--emerald-dim);
+      background: var(--emerald-bg);
+      color: var(--link);
+    }
+
+    .topic-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      gap: 8px 10px;
+      padding-top: 2px;
+      border-top: 1px solid var(--border-soft);
+    }
+    .topic-bar .label {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-3);
+      padding-top: 7px;
+      flex-shrink: 0;
+      width: 36px;
+    }
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      flex: 1;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      line-height: 1;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--chip-border);
+      background: var(--chip);
+      color: var(--text-2);
+      cursor: pointer;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
+    }
+    .chip:hover {
+      border-color: #6b7385;
+      color: var(--text);
+      background: var(--surface-2);
+    }
+    .chip.active {
+      background: var(--chip-active);
+      border-color: var(--emerald-dim);
+      color: var(--link);
+    }
+    .chip .count {
+      font-variant-numeric: tabular-nums;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .chip.active .count { color: #86efac; }
+    .chip.selected-only {
+      background: var(--emerald-bg);
+      border-color: var(--emerald-dim);
+      color: var(--link);
+    }
+    .chip .x {
+      margin-left: 2px;
+      opacity: 0.75;
+      font-size: 11px;
+    }
+
+    .topic-mode {
+      display: inline-flex;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      overflow: hidden;
+      font-size: 12px;
+    }
+    .topic-mode button {
+      border: none;
+      background: var(--surface);
+      color: var(--text-3);
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    .topic-mode button + button { border-left: 1px solid var(--border); }
+    .topic-mode button.active {
+      background: var(--surface-2);
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .clear-filters {
+      font-size: 12px;
+      color: var(--text-3);
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 4px 6px;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .clear-filters:hover { color: var(--danger); }
+    .clear-filters:disabled {
+      opacity: 0.35;
+      cursor: default;
+      text-decoration: none;
+    }
+
+    .result-meta {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 12px 2px 10px;
+      font-size: 12px;
+      color: var(--text-3);
+    }
+    .result-meta .active-filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+    .pill-q {
+      font-family: var(--mono);
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 5px;
+      background: var(--pill-q-bg);
+      color: var(--pill-q-fg);
+      border: 1px solid var(--pill-q-border);
+    }
+
+    /* Table — full width of shell */
+    .table-wrap {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: auto;
+      max-height: calc(100vh - 240px);
+      background: var(--bg-elevated);
+      box-shadow: 0 1px 0 var(--inset-shine) inset;
+    }
+
+    table.lb {
+      width: 100%;
+      min-width: 880px;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 13.5px;
+    }
+    table.lb thead th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: var(--table-head);
+      backdrop-filter: blur(10px);
+      text-align: left;
+      font-weight: 600;
+      font-size: 11px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--text-3);
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    table.lb thead th.num { text-align: right; }
+    table.lb tbody td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border-soft);
+      vertical-align: top;
+    }
+    table.lb tbody tr:last-child td { border-bottom: none; }
+    table.lb tbody tr {
+      transition: background 0.1s;
+    }
+    table.lb tbody tr:hover {
+      background: var(--surface-hover);
+    }
+    table.lb tbody tr:hover .row-actions {
+      opacity: 1;
+    }
+
+    /* compact: tighter padding, still show 1-line desc */
+    body.density-compact table.lb tbody td {
+      padding: 9px 14px;
+    }
+    body.density-compact .repo-desc {
+      -webkit-line-clamp: 1;
+      line-clamp: 1;
+    }
+    body.density-comfortable .repo-desc {
+      -webkit-line-clamp: 2;
+      line-clamp: 2;
+    }
+    body.hide-desc .repo-desc { display: none !important; }
+
+    body.density-compact .topic-row .chip-sm:nth-child(n+3) { display: none; }
+    body.density-compact .topic-row .more-when-compact { display: inline-flex; }
+    body.density-comfortable .topic-row .more-when-compact { display: none; }
+
+    .rank {
+      font-variant-numeric: tabular-nums;
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--muted);
+      width: 40px;
+    }
+    .rank.t1 { color: var(--rank-1); }
+    .rank.t2 { color: var(--rank-2); }
+    .rank.t3 { color: var(--rank-3); }
+
+    .repo-cell {
+      min-width: 280px;
+      width: 46%;
+    }
+    .repo-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+    .avatar {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: linear-gradient(145deg, var(--avatar-from), var(--avatar-to));
+      flex-shrink: 0;
+      display: grid;
+      place-items: center;
+      font-size: 10px;
+      color: var(--text-2);
+      font-weight: 650;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .repo-name {
+      min-width: 0;
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .repo-name a {
+      color: inherit;
+      text-decoration: none;
+    }
+    .repo-name a:hover .name {
+      color: var(--link);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .owner { color: var(--text-3); }
+    .slash { color: var(--muted); }
+    .name { color: var(--text); font-weight: 600; }
+
+    .row-actions {
+      display: inline-flex;
+      gap: 2px;
+      opacity: 0.65;
+      transition: opacity 0.12s;
+      flex-shrink: 0;
+    }
+    .row-actions button {
+      border: none;
+      background: transparent;
+      color: var(--text-3);
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      cursor: pointer;
+      font-size: 13px;
+      line-height: 1;
+    }
+    .row-actions button:hover {
+      background: var(--surface);
+      color: var(--text);
+    }
+
+    /* Description — always in DOM; toggle only hides */
+    .repo-desc {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      margin: 5px 0 0;
+      font-size: 12.5px;
+      line-height: 1.45;
+      color: var(--text-3);
+      max-width: 56rem;
+    }
+
+    .topic-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 7px;
+    }
+    body.density-compact .topic-row { margin-top: 5px; }
+
+    .chip-sm {
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text-3);
+      cursor: pointer;
+      line-height: 1.35;
+    }
+    .chip-sm:hover {
+      border-color: var(--emerald-dim);
+      color: var(--link);
+      background: var(--emerald-bg);
+    }
+    .chip-sm.on-filter {
+      border-color: var(--emerald-dim);
+      background: var(--emerald-bg);
+      color: var(--link);
+    }
+
+    .lang-cell {
+      min-width: 168px;
+      width: 200px;
+      max-width: 240px;
+      vertical-align: middle !important;
+    }
+    .lang-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .lang-bar {
+      display: flex;
+      height: 6px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: var(--surface);
+      border: 1px solid var(--border-soft);
+    }
+    .lang-bar > span {
+      display: block;
+      height: 100%;
+      min-width: 0;
+    }
+    .lang-list {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .lang-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-2);
+      line-height: 1.25;
+      min-width: 0;
+      border: none;
+      background: none;
+      padding: 0;
+      margin: 0;
+      cursor: pointer;
+      text-align: left;
+      font: inherit;
+      width: 100%;
+    }
+    .lang-row:hover .lang-name { color: var(--link); }
+    .lang-row.on-filter .lang-name {
+      color: var(--link);
+      font-weight: 600;
+    }
+    .lang-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2);
+    }
+    .lang-name {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--text-2);
+    }
+    .lang-pct {
+      font-variant-numeric: tabular-nums;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-3);
+      flex-shrink: 0;
+    }
+    .lang-more {
+      font-size: 11px;
+      color: var(--link);
+      padding: 2px 0 0 14px;
+      border: none;
+      background: none;
+      cursor: pointer;
+      font: inherit;
+      text-align: left;
+      width: fit-content;
+    }
+    .lang-more:hover {
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .lang-row.is-extra {
+      display: none;
+    }
+    .lang-stack.is-expanded .lang-row.is-extra {
+      display: flex;
+    }
+    .lang-empty {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    /* compact: keep list tight */
+    body.density-compact .lang-stack { gap: 4px; }
+
+    .lang-bar-filter {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      gap: 8px 10px;
+    }
+    .lang-bar-filter .label {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-3);
+      padding-top: 7px;
+      flex-shrink: 0;
+      width: 36px;
+    }
+
+    .num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      font-family: var(--mono);
+      white-space: nowrap;
+    }
+    .metric-primary {
+      font-weight: 650;
+      font-size: 14px;
+      color: var(--text);
+    }
+    .metric-primary .plus { color: var(--link); }
+    .metric-secondary {
+      color: var(--text-3);
+      font-size: 12px;
+    }
+
+    .empty {
+      padding: 52px 20px;
+      text-align: center;
+      color: var(--text-3);
+      font-size: 14px;
+    }
+    .empty button {
+      margin-top: 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text-2);
+      padding: 7px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .empty button:hover { color: var(--text); border-color: #6b7385; }
+
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: var(--modal-scrim);
+      z-index: 50;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      backdrop-filter: blur(4px);
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      width: 100%;
+      max-width: 440px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px;
+      box-shadow: var(--shadow-modal);
+    }
+    .modal h2 {
+      margin: 0 0 4px;
+      font-size: 15px;
+      font-weight: 650;
+    }
+    .modal .sub {
+      margin: 0 0 14px;
+      font-size: 12px;
+      color: var(--text-3);
+    }
+    .modal .close {
+      float: right;
+      background: none;
+      border: none;
+      color: var(--text-3);
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .modal .close:hover { color: var(--text); }
+    .modal .gh-link {
+      display: block;
+      text-align: center;
+      margin-top: 14px;
+      color: var(--link);
+      font-size: 13px;
+      text-decoration: none;
+    }
+    .modal .gh-link:hover { text-decoration: underline; }
+
+    .modal.wide { max-width: 520px; }
+    .modal .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .modal .field label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-2);
+    }
+    .modal .field .hint {
+      font-size: 11px;
+      color: var(--text-3);
+      margin: 0;
+    }
+    .modal .field-input {
+      font: inherit;
+      font-size: 13px;
+      color: var(--text);
+      background: var(--surface);
+      border: 1px solid var(--chip-border);
+      border-radius: 8px;
+      padding: 9px 12px;
+      outline: none;
+      width: 100%;
+    }
+    .modal .field-input:focus {
+      border-color: var(--emerald-dim);
+      box-shadow: 0 0 0 3px rgba(18, 166, 106, 0.2);
+    }
+    .modal .field-error {
+      font-size: 12px;
+      color: var(--danger);
+      min-height: 1.2em;
+    }
+    .modal .preview-card {
+      display: none;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      background: var(--surface);
+      margin-bottom: 12px;
+      gap: 8px;
+    }
+    .modal .preview-card.show { display: block; }
+    .modal .preview-card .pv-name {
+      font-weight: 650;
+      color: var(--text);
+      font-size: 14px;
+    }
+    .modal .preview-card .pv-desc {
+      font-size: 12px;
+      color: var(--text-3);
+      margin: 4px 0 8px;
+    }
+    .modal .preview-card .pv-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      font-size: 12px;
+      color: var(--text-2);
+      font-variant-numeric: tabular-nums;
+    }
+    .modal .preview-card .pv-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      margin-top: 8px;
+    }
+    .modal .preview-card .pv-status.on-board {
+      background: var(--emerald-bg);
+      border-color: var(--emerald-dim);
+      color: var(--link);
+    }
+    .modal .preview-card .pv-status.tracking {
+      background: var(--surface-2);
+      color: var(--text-2);
+    }
+    .modal .preview-card .pv-status.pending {
+      background: rgba(251, 191, 36, 0.12);
+      border-color: var(--amber);
+      color: var(--amber);
+    }
+    .modal-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
+      margin-top: 4px;
+    }
+    .btn {
+      font: inherit;
+      font-size: 13px;
+      border-radius: 8px;
+      padding: 8px 14px;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text-2);
+    }
+    .btn:hover { color: var(--text); border-color: var(--chip-border); }
+    .btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .btn-primary {
+      background: var(--emerald-dim);
+      border-color: var(--emerald-dim);
+      color: #fff;
+      font-weight: 600;
+    }
+    .btn-primary:hover:not(:disabled) {
+      filter: brightness(1.08);
+      color: #fff;
+    }
+    .btn-ghost {
+      background: transparent;
+    }
+
+    .header-btn {
+      font: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 6px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--emerald-dim);
+      background: var(--emerald-bg);
+      color: var(--link);
+      cursor: pointer;
+    }
+    .header-btn:hover {
+      filter: brightness(1.08);
+    }
+
+    .badge-track {
+      display: inline-flex;
+      align-items: center;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--emerald-bg);
+      color: var(--link);
+      border: 1px solid var(--emerald-dim);
+      vertical-align: middle;
+      margin-left: 6px;
+      flex-shrink: 0;
+    }
+    .badge-track.pending {
+      background: rgba(251, 191, 36, 0.12);
+      border-color: var(--amber);
+      color: var(--amber);
+    }
+    .badge-track.user-only {
+      background: var(--surface-2);
+      border-color: var(--border);
+      color: var(--text-3);
+    }
+
+    .tracked-panel {
+      display: none;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--bg-elevated);
+      padding: 14px 16px;
+      margin-bottom: 12px;
+    }
+    .tracked-panel.show { display: block; }
+    .tracked-panel h3 {
+      margin: 0 0 4px;
+      font-size: 14px;
+      font-weight: 650;
+    }
+    .tracked-panel .tp-sub {
+      margin: 0 0 12px;
+      font-size: 12px;
+      color: var(--text-3);
+    }
+    .tracked-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+    .tracked-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1.4fr) minmax(120px, 0.8fr) auto auto;
+      gap: 12px;
+      align-items: center;
+      padding: 10px 0;
+      border-top: 1px solid var(--border-soft);
+      font-size: 13px;
+    }
+    .tracked-row:first-child { border-top: none; }
+    .tracked-row .tr-name {
+      font-weight: 600;
+      color: var(--text);
+      min-width: 0;
+    }
+    .tracked-row .tr-name a {
+      color: inherit;
+      text-decoration: none;
+    }
+    .tracked-row .tr-name a:hover { color: var(--link); }
+    .tracked-row .tr-meta {
+      font-size: 12px;
+      color: var(--text-3);
+      font-variant-numeric: tabular-nums;
+    }
+    .tracked-row .tr-status {
+      font-size: 11px;
+      color: var(--text-2);
+    }
+    .tracked-row .tr-actions {
+      display: flex;
+      gap: 6px;
+    }
+    .tracked-empty {
+      font-size: 13px;
+      color: var(--text-3);
+      padding: 16px 0;
+      text-align: center;
+    }
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(12px);
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 16px;
+      border-radius: 10px;
+      font-size: 13px;
+      box-shadow: var(--shadow-modal);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s, transform 0.2s;
+      z-index: 60;
+      max-width: min(420px, 90vw);
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .cards { display: none; }
+    @media (max-width: 720px) {
+      /* min-width still forces horizontal scroll via body; cards as fallback if user zooms */
+      .table-wrap { display: none; }
+      .cards { display: flex; flex-direction: column; gap: 8px; }
+      .card {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 14px;
+        background: var(--bg-elevated);
+      }
+      .card-top {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+      }
+      .card-metric {
+        margin-left: auto;
+        text-align: right;
+        flex-shrink: 0;
+      }
+      .card .repo-desc {
+        margin-top: 8px;
+        -webkit-line-clamp: 2;
+        line-clamp: 2;
+      }
+    }
+
+    .spec {
+      margin-top: 28px;
+      padding: 14px 16px;
+      border: 1px dashed var(--border);
+      border-radius: var(--radius);
+      font-size: 12px;
+      color: var(--text-3);
+      line-height: 1.65;
+      background: rgba(34, 38, 47, 0.5);
+    }
+    .spec h3 {
+      margin: 0 0 8px;
+      font-size: 12px;
+      color: var(--text-2);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .spec ul { margin: 0; padding-left: 18px; }
+    .spec li { margin: 2px 0; }
+    .spec kbd {
+      font-family: var(--mono);
+      font-size: 11px;
+      background: var(--surface);
+      padding: 1px 5px;
+      border-radius: 3px;
+      border: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body class="density-comfortable">
+  <div class="page">
+    <div class="proto-banner">
+      <strong>原型 · 可交互</strong>
+      <span>全宽 · Light/Dark · 添加未索引仓库 · min-width 960px</span>
+      <code>docs/prototypes/leaderboard-v2.html</code>
+    </div>
+
+    <header class="top">
+      <h1>GH Trending</h1>
+      <div class="meta">
+        <button type="button" class="header-btn" id="btnAddRepo" title="跟踪爬虫未覆盖的仓库">＋ 添加仓库</button>
+        <div class="theme-toggle" role="group" aria-label="主题">
+          <button type="button" data-theme-set="light" title="浅色主题">☀ Light</button>
+          <button type="button" data-theme-set="dark" title="深色主题">☾ Dark</button>
+        </div>
+        <span>数据截至 2026-08-07</span>
+        <span>tester</span>
+        <button type="button" class="link">管理</button>
+        <button type="button" class="link">登出</button>
+      </div>
+    </header>
+
+    <section class="controls" aria-label="筛选">
+      <div class="controls-row">
+        <div class="seg" role="group" aria-label="榜单">
+          <button type="button" data-board="trending">趋势榜</button>
+          <button type="button" class="active" data-board="top">总榜</button>
+          <button type="button" data-board="tracked">我的跟踪</button>
+        </div>
+
+        <div class="metric-group" id="metricGroup">
+          <label><input type="radio" name="metric" value="stars" checked /> Star</label>
+          <label><input type="radio" name="metric" value="forks" /> Fork</label>
+          <label><input type="radio" name="metric" value="watchers" /> Watch</label>
+        </div>
+
+        <select id="date" aria-label="日期">
+          <option value="">最新</option>
+          <option>2026-08-07</option>
+          <option>2026-08-06</option>
+          <option>2026-08-05</option>
+        </select>
+      </div>
+
+      <div class="controls-row">
+        <div class="search-wrap">
+          <span class="icon" aria-hidden="true">⌕</span>
+          <input
+            id="q"
+            class="input"
+            type="search"
+            placeholder="关键词：名字 / 描述 / 标签…"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+
+        <div class="topic-mode" role="group" aria-label="标签匹配模式">
+          <button type="button" class="active" data-mode="and" title="必须同时包含所选标签">AND</button>
+          <button type="button" data-mode="or" title="包含任一所选标签">OR</button>
+        </div>
+
+        <label class="toggle-chip" title="紧凑模式减少行高与标签数量，仍保留一行介绍">
+          <input type="checkbox" id="density" />
+          紧凑密度
+        </label>
+        <label class="toggle-chip" title="关闭后隐藏仓库介绍">
+          <input type="checkbox" id="showDesc" checked />
+          显示介绍
+        </label>
+
+        <button type="button" class="clear-filters" id="clearFilters" disabled>清除筛选</button>
+      </div>
+
+      <div class="lang-bar-filter">
+        <span class="label">语言</span>
+        <div class="chips" id="langFacets" aria-label="语言多选（仓库含该语言即匹配）"></div>
+      </div>
+
+      <div class="topic-bar">
+        <span class="label">标签</span>
+        <div class="chips" id="facetChips" aria-label="可选标签"></div>
+      </div>
+    </section>
+
+    <div class="tracked-panel" id="trackedPanel">
+      <h3>我的跟踪仓库</h3>
+      <p class="tp-sub">
+        手动添加的仓库会进入每日快照队列，即使未进趋势/总榜 top100 也可查看指标与历史。
+        已在榜内的条目会标「已在榜」。
+      </p>
+      <div class="tracked-list" id="trackedList"></div>
+    </div>
+
+    <div class="result-meta">
+      <div class="active-filters" id="activeFilters"></div>
+      <div id="resultCount">—</div>
+    </div>
+
+    <div class="table-wrap" id="tableWrap">
+      <table class="lb" id="table">
+        <thead>
+          <tr>
+            <th style="width:44px">#</th>
+            <th>Repo</th>
+            <th style="width:200px">Languages</th>
+            <th class="num" id="thPrimary" style="width:100px">★</th>
+            <th class="num" style="width:160px">辅指标</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+      <div class="empty" id="empty" hidden>
+        <div>无匹配仓库</div>
+        <div style="margin-top:6px;font-size:12px">试试减少标签、切换 OR，或清空关键词</div>
+        <button type="button" id="emptyClear">清除筛选</button>
+      </div>
+    </div>
+
+    <div class="cards" id="cards"></div>
+
+    <aside class="spec">
+      <h3>本版修订</h3>
+      <ul>
+        <li><strong>多语言</strong>：每个 repo 为 <kbd>languages: [{name, pct}, …]</kbd>（占比之和 ≈ 100）；行内色条 + 名称/百分比；<kbd>+N more</kbd> 可展开。</li>
+        <li><strong>语言筛选</strong>：顶部可多选；仓库<strong>含任一</strong>所选语言即匹配（OR）。点行内语言可快捷筛选。</li>
+        <li><strong>趋势</strong>：仅 Repo 旁 📈 打开历史弹层；无列表末列 sparkline。</li>
+        <li><strong>添加仓库</strong>：右上角「＋ 添加仓库」；解析 <kbd>owner/name</kbd> 或 GitHub URL → 预览 → 加入跟踪；见「我的跟踪」。</li>
+        <li><strong>主题</strong>：Light / Dark；<kbd>localStorage</kbd> 键 <kbd>ght-theme</kbd>。</li>
+        <li><strong>布局</strong>：全宽 + <kbd>min-width: 960px</kbd>；介绍默认显示。</li>
+      </ul>
+    </aside>
+  </div>
+
+  <div class="toast" id="toast" role="status"></div>
+
+  <div class="modal-backdrop" id="modal" role="dialog" aria-modal="true">
+    <div class="modal">
+      <button type="button" class="close" id="modalClose">关闭</button>
+      <h2 id="modalTitle">repo</h2>
+      <p class="sub">近 90 天快照趋势（示意）</p>
+      <svg id="modalSpark" viewBox="0 0 320 80" width="100%" height="80" aria-hidden="true"></svg>
+      <a class="gh-link" id="modalGh" href="#" target="_blank" rel="noopener">在 GitHub 打开</a>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="addModal" role="dialog" aria-modal="true" aria-labelledby="addModalTitle">
+    <div class="modal wide">
+      <button type="button" class="close" id="addModalClose">关闭</button>
+      <h2 id="addModalTitle">添加仓库</h2>
+      <p class="sub">跟踪爬虫未覆盖或未进当日榜的 GitHub 仓库。校验后写入跟踪列表，并纳入后续每日快照。</p>
+
+      <div class="field">
+        <label for="addRepoInput">仓库地址或 full_name</label>
+        <input
+          id="addRepoInput"
+          class="field-input"
+          type="text"
+          placeholder="例如 owner/name 或 https://github.com/owner/name"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <p class="hint">仅支持公开仓库。私有库、不存在或重定向无效时会失败。</p>
+        <div class="field-error" id="addRepoError"></div>
+      </div>
+
+      <div class="preview-card" id="addPreview">
+        <div class="pv-name" id="pvName">—</div>
+        <div class="pv-desc" id="pvDesc"></div>
+        <div class="pv-meta" id="pvMeta"></div>
+        <div class="pv-status" id="pvStatus"></div>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="addRepoCancel">取消</button>
+        <button type="button" class="btn" id="addRepoLookup">解析预览</button>
+        <button type="button" class="btn btn-primary" id="addRepoSubmit" disabled>加入跟踪</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const THEME_KEY = "ght-theme";
+
+    function getPreferredTheme() {
+      try {
+        const saved = localStorage.getItem(THEME_KEY);
+        if (saved === "light" || saved === "dark") return saved;
+      } catch (_) { /* ignore */ }
+      if (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) {
+        return "light";
+      }
+      return "dark";
+    }
+
+    function applyTheme(theme) {
+      const t = theme === "light" ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", t);
+      try {
+        localStorage.setItem(THEME_KEY, t);
+      } catch (_) { /* ignore */ }
+      document.querySelectorAll("[data-theme-set]").forEach((btn) => {
+        btn.classList.toggle("active", btn.getAttribute("data-theme-set") === t);
+      });
+      if (typeof render === "function") {
+        try { render(); } catch (_) { /* first paint before render exists */ }
+      }
+    }
+
+    const LANG_COLORS = {
+      Python: "#3572A5",
+      TypeScript: "#3178c6",
+      JavaScript: "#f1e05a",
+      Markdown: "#083fa1",
+      Go: "#00ADD8",
+      Rust: "#dea584",
+      HTML: "#e34c26",
+      CSS: "#563d7c",
+      Shell: "#89e051",
+      Dockerfile: "#384d54",
+      C: "#555555",
+      "C++": "#f34b7d",
+      Java: "#b07219",
+      Ruby: "#701516",
+      Vue: "#41b883",
+      SCSS: "#c6538c",
+      Jupyter: "#DA5B0B",
+      PowerShell: "#012456",
+      Astro: "#ff5a00",
+      Makefile: "#427819",
+      MDX: "#fcb32c",
+      Assembly: "#6E4C13",
+      Cuda: "#3A4E3A",
+      Other: "#8b949e",
+    };
+
+    function langColor(name) {
+      return LANG_COLORS[name] || LANG_COLORS.Other;
+    }
+
+    /** languages: ordered by pct desc; pct is share of code (approx, sums ~100) */
+    const DATA = [
+      {
+        full_name: "codecrafters-io/build-your-own-x",
+        description: "Master programming by recreating your favorite technologies from scratch.",
+        languages: [{ name: "Markdown", pct: 100 }],
+        stars: 537000,
+        forks: 51000,
+        watchers: 8900,
+        stars_today: 420,
+        topics: ["awesome-list", "tutorial", "education", "programming"],
+        spark: [12, 18, 15, 22, 30, 28, 35],
+      },
+      {
+        full_name: "sindresorhus/awesome",
+        description: "😎 Awesome lists about all kinds of interesting topics",
+        languages: [],
+        stars: 493000,
+        forks: 36000,
+        watchers: 7200,
+        stars_today: 180,
+        topics: ["awesome-list", "lists"],
+        spark: [20, 19, 21, 18, 22, 24, 23],
+      },
+      {
+        full_name: "public-apis/public-apis",
+        description: "A collective list of free APIs for use in software and web development.",
+        languages: [
+          { name: "Python", pct: 88.2 },
+          { name: "Shell", pct: 7.4 },
+          { name: "Makefile", pct: 4.4 },
+        ],
+        stars: 455000,
+        forks: 50000,
+        watchers: 6100,
+        stars_today: 310,
+        topics: ["api", "public-api", "awesome-list", "http"],
+        spark: [8, 12, 40, 22, 18, 25, 30],
+      },
+      {
+        full_name: "freeCodeCamp/freeCodeCamp",
+        description: "freeCodeCamp.org's open-source codebase and curriculum. Learn math, programming, and more.",
+        languages: [
+          { name: "TypeScript", pct: 62.1 },
+          { name: "JavaScript", pct: 24.5 },
+          { name: "CSS", pct: 8.2 },
+          { name: "HTML", pct: 3.4 },
+          { name: "Shell", pct: 1.8 },
+        ],
+        stars: 454000,
+        forks: 46000,
+        watchers: 8400,
+        stars_today: 95,
+        topics: ["education", "curriculum", "javascript", "learn-to-code"],
+        spark: [30, 28, 29, 31, 27, 26, 28],
+      },
+      {
+        full_name: "EbookFoundation/free-programming-books",
+        description: "📚 Freely available programming books for developers at every skill level.",
+        languages: [
+          { name: "Python", pct: 54.0 },
+          { name: "Shell", pct: 28.0 },
+          { name: "Ruby", pct: 12.0 },
+          { name: "HTML", pct: 6.0 },
+        ],
+        stars: 394000,
+        forks: 67000,
+        watchers: 9800,
+        stars_today: 140,
+        topics: ["awesome-list", "books", "education", "learning"],
+        spark: [10, 11, 9, 14, 16, 15, 18],
+      },
+      {
+        full_name: "openclaw/openclaw",
+        description: "Your own personal AI assistant. Any OS. Any Platform. The lobster way.",
+        languages: [
+          { name: "TypeScript", pct: 71.3 },
+          { name: "Python", pct: 14.2 },
+          { name: "Rust", pct: 8.5 },
+          { name: "Shell", pct: 4.0 },
+          { name: "Other", pct: 2.0 },
+        ],
+        stars: 385000,
+        forks: 81000,
+        watchers: 5200,
+        stars_today: 2100,
+        topics: ["ai", "llm", "assistant", "agent", "chatbot"],
+        spark: [5, 12, 40, 80, 120, 90, 110],
+      },
+      {
+        full_name: "nilibuild/developer-roadmap",
+        description: "Interactive roadmaps, guides and other educational content to help developers grow in their careers.",
+        languages: [
+          { name: "TypeScript", pct: 78.6 },
+          { name: "Astro", pct: 12.1 },
+          { name: "CSS", pct: 6.4 },
+          { name: "JavaScript", pct: 2.9 },
+        ],
+        stars: 364000,
+        forks: 45000,
+        watchers: 7100,
+        stars_today: 260,
+        topics: ["roadmap", "career", "education", "guide"],
+        spark: [14, 16, 20, 18, 22, 25, 24],
+      },
+      {
+        full_name: "donnemartin/system-design-primer",
+        description: "Learn how to design large-scale systems. Prep for the system design interview. Includes Anki flashcards.",
+        languages: [
+          { name: "Python", pct: 92.5 },
+          { name: "Shell", pct: 5.1 },
+          { name: "HTML", pct: 2.4 },
+        ],
+        stars: 362000,
+        forks: 58000,
+        watchers: 9300,
+        stars_today: 190,
+        topics: ["system-design", "interview", "education", "architecture"],
+        spark: [11, 13, 12, 15, 14, 16, 17],
+      },
+      {
+        full_name: "jwasham/coding-interview-university",
+        description: "A complete computer science study plan to become a software engineer.",
+        languages: [{ name: "Markdown", pct: 100 }],
+        stars: 358000,
+        forks: 85000,
+        watchers: 11200,
+        stars_today: 88,
+        topics: ["interview", "computer-science", "education", "study-plan"],
+        spark: [9, 10, 8, 11, 10, 12, 11],
+      },
+      {
+        full_name: "vinta/awesome-python",
+        description: "An opinionated list of Python frameworks, libraries, software and resources.",
+        languages: [
+          { name: "Python", pct: 96.8 },
+          { name: "Makefile", pct: 3.2 },
+        ],
+        stars: 313000,
+        forks: 28000,
+        watchers: 5400,
+        stars_today: 72,
+        topics: ["awesome-list", "python", "libraries"],
+        spark: [6, 7, 8, 7, 9, 8, 10],
+      },
+      {
+        full_name: "awesome-selfhosted/awesome-selfhosted",
+        description: "A list of Free Software network services which can be hosted on your own servers.",
+        languages: [
+          { name: "Makefile", pct: 58.0 },
+          { name: "Python", pct: 32.0 },
+          { name: "Shell", pct: 10.0 },
+        ],
+        stars: 311000,
+        forks: 15000,
+        watchers: 4100,
+        stars_today: 156,
+        topics: ["awesome-list", "self-hosted", "privacy", "devops"],
+        spark: [15, 18, 14, 20, 22, 19, 25],
+      },
+      {
+        full_name: "practical-tutorials/project-based-learning",
+        description: "Curated list of project-based tutorials for learning by building real applications.",
+        languages: [{ name: "Markdown", pct: 100 }],
+        stars: 277000,
+        forks: 36000,
+        watchers: 4800,
+        stars_today: 64,
+        topics: ["tutorial", "education", "project-based-learning", "awesome-list"],
+        spark: [4, 5, 6, 5, 7, 8, 7],
+      },
+      {
+        full_name: "huggingface/transformers",
+        description: "🤗 Transformers: State-of-the-art Machine Learning for Pytorch, TensorFlow, and JAX.",
+        languages: [
+          { name: "Python", pct: 94.2 },
+          { name: "Cuda", pct: 2.8 },
+          { name: "Shell", pct: 1.6 },
+          { name: "C++", pct: 0.9 },
+          { name: "Dockerfile", pct: 0.5 },
+        ],
+        stars: 152000,
+        forks: 30000,
+        watchers: 1200,
+        stars_today: 890,
+        topics: ["ai", "llm", "machine-learning", "nlp", "deep-learning", "pytorch"],
+        spark: [40, 42, 55, 60, 58, 70, 75],
+      },
+      {
+        full_name: "langchain-ai/langchain",
+        description: "Build context-aware reasoning applications with LLMs and composable chains.",
+        languages: [
+          { name: "Python", pct: 81.4 },
+          { name: "Jupyter", pct: 12.6 },
+          { name: "TypeScript", pct: 3.8 },
+          { name: "Shell", pct: 2.2 },
+        ],
+        stars: 118000,
+        forks: 19000,
+        watchers: 900,
+        stars_today: 640,
+        topics: ["ai", "llm", "agents", "rag", "python"],
+        spark: [30, 45, 50, 48, 62, 70, 68],
+      },
+      {
+        full_name: "vercel/next.js",
+        description: "The React Framework for the Web — hybrid static & server rendering, TypeScript ready.",
+        languages: [
+          { name: "JavaScript", pct: 48.2 },
+          { name: "TypeScript", pct: 41.5 },
+          { name: "CSS", pct: 5.8 },
+          { name: "MDX", pct: 2.9 },
+          { name: "Rust", pct: 1.6 },
+        ],
+        stars: 136000,
+        forks: 30000,
+        watchers: 2100,
+        stars_today: 120,
+        topics: ["react", "framework", "ssr", "javascript", "web"],
+        spark: [22, 21, 23, 24, 22, 25, 24],
+      },
+      {
+        full_name: "rust-lang/rust",
+        description: "Empowering everyone to build reliable and efficient software.",
+        languages: [
+          { name: "Rust", pct: 97.8 },
+          { name: "HTML", pct: 0.9 },
+          { name: "Python", pct: 0.7 },
+          { name: "Shell", pct: 0.6 },
+        ],
+        stars: 108000,
+        forks: 14000,
+        watchers: 1500,
+        stars_today: 55,
+        topics: ["rust", "compiler", "language", "systems"],
+        spark: [10, 11, 10, 12, 11, 13, 12],
+      },
+      {
+        full_name: "golang/go",
+        description: "The Go programming language — simple, reliable, and efficient software.",
+        languages: [
+          { name: "Go", pct: 91.3 },
+          { name: "Assembly", pct: 4.2 },
+          { name: "HTML", pct: 2.1 },
+          { name: "C", pct: 1.5 },
+          { name: "Shell", pct: 0.9 },
+        ],
+        stars: 132000,
+        forks: 18000,
+        watchers: 3200,
+        stars_today: 48,
+        topics: ["go", "language", "compiler"],
+        spark: [8, 9, 8, 10, 9, 11, 10],
+      },
+      {
+        full_name: "microsoft/vscode",
+        description: "Visual Studio Code — free, open source code editor for modern development.",
+        languages: [
+          { name: "TypeScript", pct: 93.4 },
+          { name: "CSS", pct: 2.1 },
+          { name: "JavaScript", pct: 1.8 },
+          { name: "HTML", pct: 1.4 },
+          { name: "Rust", pct: 0.8 },
+          { name: "Other", pct: 0.5 },
+        ],
+        stars: 178000,
+        forks: 32000,
+        watchers: 5600,
+        stars_today: 210,
+        topics: ["editor", "electron", "typescript", "ide"],
+        spark: [18, 19, 20, 18, 21, 22, 20],
+      },
+    ];
+
+    const state = {
+      board: "top",
+      metric: "stars",
+      languages: /** @type {string[]} */ ([]),
+      q: "",
+      topics: /** @type {string[]} */ ([]),
+      topicMode: "and",
+      density: "comfortable",
+      showDesc: true,
+    };
+
+    /**
+     * User-tracked repos (not necessarily on daily top/trending).
+     * status: on_board | tracking | pending
+     * @type {Array<{
+     *   full_name: string;
+     *   description: string;
+     *   languages: {name:string,pct:number}[];
+     *   stars: number;
+     *   forks: number;
+     *   watchers: number;
+     *   topics: string[];
+     *   spark: number[];
+     *   status: 'on_board'|'tracking'|'pending';
+     *   added_at: string;
+     *   source: 'user';
+     * }>}
+     */
+    let trackedRepos = [
+      {
+        full_name: "astral-sh/uv",
+        description: "An extremely fast Python package and project manager, written in Rust.",
+        languages: [
+          { name: "Rust", pct: 88.2 },
+          { name: "Python", pct: 9.1 },
+          { name: "Shell", pct: 2.7 },
+        ],
+        stars: 62000,
+        forks: 1800,
+        watchers: 420,
+        topics: ["python", "packaging", "rust"],
+        spark: [40, 45, 50, 55, 60, 58, 62],
+        status: "tracking",
+        added_at: "2026-08-01",
+        source: "user",
+      },
+      {
+        full_name: "openai/codex",
+        description: "Lightweight coding agent that runs in your terminal",
+        languages: [
+          { name: "Rust", pct: 72.0 },
+          { name: "TypeScript", pct: 20.0 },
+          { name: "Other", pct: 8.0 },
+        ],
+        stars: 41000,
+        forks: 4800,
+        watchers: 890,
+        topics: ["ai", "cli", "agent"],
+        spark: [10, 20, 35, 50, 48, 55, 60],
+        status: "tracking",
+        added_at: "2026-08-03",
+        source: "user",
+      },
+      {
+        full_name: "vercel/next.js",
+        description: "The React Framework for the Web — hybrid static & server rendering, TypeScript ready.",
+        languages: [
+          { name: "JavaScript", pct: 48.2 },
+          { name: "TypeScript", pct: 41.5 },
+          { name: "CSS", pct: 5.8 },
+        ],
+        stars: 136000,
+        forks: 30000,
+        watchers: 2100,
+        topics: ["react", "framework"],
+        spark: [22, 21, 23, 24, 22, 25, 24],
+        status: "on_board",
+        added_at: "2026-07-20",
+        source: "user",
+      },
+    ];
+
+    /** Mock GitHub catalog for lookup preview (simulates API) */
+    const GH_CATALOG = {
+      "charmbracelet/bubbletea": {
+        full_name: "charmbracelet/bubbletea",
+        description: "A powerful little TUI framework 🏗",
+        languages: [
+          { name: "Go", pct: 97.5 },
+          { name: "Shell", pct: 2.5 },
+        ],
+        stars: 32000,
+        forks: 920,
+        watchers: 210,
+        topics: ["tui", "go", "cli"],
+        spark: [8, 9, 10, 11, 12, 11, 13],
+      },
+      "zed-industries/zed": {
+        full_name: "zed-industries/zed",
+        description: "Code at the speed of thought — Zed is a high-performance, multiplayer code editor.",
+        languages: [
+          { name: "Rust", pct: 91.0 },
+          { name: "TypeScript", pct: 5.0 },
+          { name: "Other", pct: 4.0 },
+        ],
+        stars: 64000,
+        forks: 4800,
+        watchers: 1100,
+        topics: ["editor", "rust", "collaborative"],
+        spark: [20, 30, 40, 45, 50, 55, 58],
+      },
+      "biomejs/biome": {
+        full_name: "biomejs/biome",
+        description: "A toolchain for web projects, aimed to provide functionalities to maintain them.",
+        languages: [
+          { name: "Rust", pct: 82.0 },
+          { name: "TypeScript", pct: 14.0 },
+          { name: "Other", pct: 4.0 },
+        ],
+        stars: 21000,
+        forks: 680,
+        watchers: 150,
+        topics: ["linter", "formatter", "javascript"],
+        spark: [5, 8, 12, 15, 18, 20, 22],
+      },
+    };
+
+    // Seed catalog with leaderboard + tracked so "already exists" works
+    for (const r of DATA) {
+      GH_CATALOG[r.full_name.toLowerCase()] = {
+        full_name: r.full_name,
+        description: r.description,
+        languages: r.languages,
+        stars: r.stars,
+        forks: r.forks,
+        watchers: r.watchers,
+        topics: r.topics,
+        spark: r.spark,
+      };
+    }
+    for (const r of trackedRepos) {
+      GH_CATALOG[r.full_name.toLowerCase()] = {
+        full_name: r.full_name,
+        description: r.description,
+        languages: r.languages,
+        stars: r.stars,
+        forks: r.forks,
+        watchers: r.watchers,
+        topics: r.topics,
+        spark: r.spark,
+      };
+    }
+
+    /** @type {{ full_name: string } | null} */
+    let addPreviewPayload = null;
+
+    const $ = (id) => document.getElementById(id);
+
+    function toast(msg) {
+      const el = $("toast");
+      el.textContent = msg;
+      el.classList.add("show");
+      clearTimeout(toast._t);
+      toast._t = setTimeout(() => el.classList.remove("show"), 2800);
+    }
+
+    function parseRepoInput(raw) {
+      let s = (raw || "").trim();
+      if (!s) return null;
+      s = s.replace(/^git\+/, "").replace(/\.git$/, "");
+      // URL forms
+      const m = s.match(
+        /^(?:https?:\/\/)?(?:www\.)?github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/?/i
+      );
+      if (m) return `${m[1]}/${m[2]}`;
+      // owner/name
+      if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(s)) return s;
+      return null;
+    }
+
+    function isOnLeaderboard(fullName) {
+      return DATA.some((d) => d.full_name.toLowerCase() === fullName.toLowerCase());
+    }
+
+    function isTracked(fullName) {
+      return trackedRepos.some((d) => d.full_name.toLowerCase() === fullName.toLowerCase());
+    }
+
+    function statusLabel(status) {
+      if (status === "on_board") return "已在榜";
+      if (status === "pending") return "同步中";
+      return "仅跟踪";
+    }
+
+    function compact(n) {
+      if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
+      if (n >= 1_000) return Math.round(n / 1_000) + "K";
+      return String(n);
+    }
+
+    function primaryValue(item) {
+      if (state.board === "trending") return item.stars_today ?? 0;
+      if (state.metric === "forks") return item.forks;
+      if (state.metric === "watchers") return item.watchers;
+      return item.stars;
+    }
+
+    function sortKey(item) {
+      return primaryValue(item);
+    }
+
+    function itemLangNames(item) {
+      return (item.languages || []).map((l) => l.name);
+    }
+
+    function matchesLanguageFilter(item) {
+      if (!state.languages.length) return true;
+      const names = new Set(itemLangNames(item));
+      // OR: repo contains any selected language
+      return state.languages.some((l) => names.has(l));
+    }
+
+    function matchesFilters(item) {
+      if (!matchesLanguageFilter(item)) return false;
+
+      if (state.topics.length) {
+        const set = new Set(item.topics);
+        if (state.topicMode === "and") {
+          if (!state.topics.every((t) => set.has(t))) return false;
+        } else {
+          if (!state.topics.some((t) => set.has(t))) return false;
+        }
+      }
+
+      if (state.q.trim()) {
+        const q = state.q.trim().toLowerCase();
+        const hay = [
+          item.full_name,
+          item.description || "",
+          ...(item.topics || []),
+          ...itemLangNames(item),
+        ]
+          .join(" ")
+          .toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    }
+
+    function buildFacets(rows) {
+      const map = new Map();
+      for (const item of rows) {
+        for (const t of item.topics) {
+          map.set(t, (map.get(t) || 0) + 1);
+        }
+      }
+      return [...map.entries()]
+        .map(([topic, count]) => ({ topic, count }))
+        .sort((a, b) => b.count - a.count || a.topic.localeCompare(b.topic));
+    }
+
+    /** Language facet counts: repos that include this language (ignore current lang filter) */
+    function buildLangFacets(rows) {
+      const map = new Map();
+      for (const item of rows) {
+        for (const l of item.languages || []) {
+          map.set(l.name, (map.get(l.name) || 0) + 1);
+        }
+      }
+      return [...map.entries()]
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+    }
+
+    function dataSource() {
+      return state.board === "tracked" ? trackedRepos : DATA;
+    }
+
+    /** Rows after q + topics, before language — for language facet */
+    function filteredWithoutLang() {
+      return dataSource().filter((item) => {
+        if (state.topics.length) {
+          const set = new Set(item.topics || []);
+          if (state.topicMode === "and") {
+            if (!state.topics.every((t) => set.has(t))) return false;
+          } else {
+            if (!state.topics.some((t) => set.has(t))) return false;
+          }
+        }
+        if (state.q.trim()) {
+          const q = state.q.trim().toLowerCase();
+          const hay = [
+            item.full_name,
+            item.description || "",
+            ...(item.topics || []),
+            ...itemLangNames(item),
+          ]
+            .join(" ")
+            .toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      });
+    }
+
+    /** For topic facets: apply lang + q, ignore topics */
+    function filteredBase() {
+      return dataSource().filter((item) => {
+        if (!matchesLanguageFilter(item)) return false;
+        if (state.q.trim()) {
+          const q = state.q.trim().toLowerCase();
+          const hay = [
+            item.full_name,
+            item.description || "",
+            ...(item.topics || []),
+            ...itemLangNames(item),
+          ]
+            .join(" ")
+            .toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      });
+    }
+
+    function filteredRows() {
+      return dataSource()
+        .filter(matchesFilters)
+        .slice()
+        .sort((a, b) => sortKey(b) - sortKey(a));
+    }
+
+    function sparkColor() {
+      return (
+        getComputedStyle(document.documentElement).getPropertyValue("--spark").trim() ||
+        "#3ecf8e"
+      );
+    }
+
+    function splitName(full) {
+      const i = full.indexOf("/");
+      return { owner: full.slice(0, i), name: full.slice(i + 1) };
+    }
+
+    function rankClass(rank) {
+      if (rank === 1) return "t1";
+      if (rank === 2) return "t2";
+      if (rank === 3) return "t3";
+      return "";
+    }
+
+    function topicChipsHtml(topics, maxShow) {
+      const shown = topics.slice(0, maxShow);
+      const rest = topics.length - shown.length;
+      const chips = shown
+        .map((t) => {
+          const on = state.topics.includes(t) ? " on-filter" : "";
+          return `<button type="button" class="chip-sm${on}" data-topic="${t}">${t}</button>`;
+        })
+        .join("");
+      const more =
+        rest > 0
+          ? `<span class="chip-sm more-when-compact" title="${topics.slice(maxShow).join(", ")}">+${rest}</span>`
+          : "";
+      return chips + more;
+    }
+
+    function formatPct(pct) {
+      if (pct >= 10) return Math.round(pct) + "%";
+      if (pct >= 1) return pct.toFixed(1).replace(/\.0$/, "") + "%";
+      return "<1%";
+    }
+
+    function languagesCellHtml(item) {
+      const langs = item.languages || [];
+      if (!langs.length) {
+        return `<div class="lang-empty">—</div>`;
+      }
+      const bar = langs
+        .map(
+          (l) =>
+            `<span style="width:${Math.max(l.pct, 0.4)}%;background:${langColor(l.name)}" title="${escapeHtml(l.name)} ${formatPct(l.pct)}"></span>`
+        )
+        .join("");
+
+      const maxShow = state.density === "compact" ? 2 : 3;
+      const rest = Math.max(0, langs.length - maxShow);
+      const rows = langs
+        .map((l, i) => {
+          const on = state.languages.includes(l.name) ? " on-filter" : "";
+          const extra = i >= maxShow ? " is-extra" : "";
+          return `<button type="button" class="lang-row${on}${extra}" data-lang="${escapeHtml(l.name)}" title="筛选：${escapeHtml(l.name)}">
+            <span class="lang-dot" style="background:${langColor(l.name)}"></span>
+            <span class="lang-name">${escapeHtml(l.name)}</span>
+            <span class="lang-pct">${formatPct(l.pct)}</span>
+          </button>`;
+        })
+        .join("");
+      const moreTitle = langs
+        .slice(maxShow)
+        .map((l) => `${l.name} ${formatPct(l.pct)}`)
+        .join(" · ");
+      const more =
+        rest > 0
+          ? `<button type="button" class="lang-more" data-lang-expand aria-expanded="false" title="${escapeHtml(moreTitle)}">+${rest} more</button>`
+          : "";
+
+      return `<div class="lang-stack">
+        <div class="lang-bar" role="img" aria-label="language breakdown">${bar}</div>
+        <div class="lang-list">${rows}${more}</div>
+      </div>`;
+    }
+
+    function wireLangExpand(root) {
+      root.querySelectorAll("[data-lang-expand]").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const stack = btn.closest(".lang-stack");
+          if (!stack) return;
+          const open = stack.classList.toggle("is-expanded");
+          const rest = stack.querySelectorAll(".lang-row.is-extra").length;
+          btn.setAttribute("aria-expanded", open ? "true" : "false");
+          btn.textContent = open ? "收起" : `+${rest} more`;
+          btn.title = open ? "收起语言列表" : btn.getAttribute("data-title") || "";
+        });
+        // preserve original title for collapsed state
+        if (btn.title) btn.setAttribute("data-title", btn.title);
+      });
+    }
+
+    function primaryCell(item) {
+      if (state.board === "trending") {
+        return `<span class="plus">+${compact(item.stars_today)}</span>`;
+      }
+      return compact(primaryValue(item));
+    }
+
+    function secondaryCell(item) {
+      if (state.board === "trending") {
+        return `${compact(item.stars)} ★ · ${compact(item.forks)} ⑂`;
+      }
+      if (state.metric === "stars") {
+        return `${compact(item.forks)} ⑂ · ${compact(item.watchers)} 👁`;
+      }
+      if (state.metric === "forks") {
+        return `${compact(item.stars)} ★ · ${compact(item.watchers)} 👁`;
+      }
+      return `${compact(item.stars)} ★ · ${compact(item.forks)} ⑂`;
+    }
+
+    function updatePrimaryHeader() {
+      const th = $("thPrimary");
+      if (state.board === "trending") th.textContent = "今日 ★";
+      else if (state.metric === "forks") th.textContent = "Fork";
+      else if (state.metric === "watchers") th.textContent = "Watch";
+      else th.textContent = "★";
+    }
+
+    function hasActiveFilters() {
+      return !!(state.q.trim() || state.topics.length || state.languages.length);
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function renderActiveFilters() {
+      const el = $("activeFilters");
+      const parts = [];
+      if (state.q.trim()) {
+        parts.push(`<span class="pill-q">q: ${escapeHtml(state.q.trim())}</span>`);
+      }
+      for (const l of state.languages) {
+        parts.push(
+          `<button type="button" class="chip selected-only" data-lang="${escapeHtml(l)}"><span class="lang-dot" style="background:${langColor(l)};width:7px;height:7px"></span>${escapeHtml(l)}<span class="x">×</span></button>`
+        );
+      }
+      for (const t of state.topics) {
+        parts.push(
+          `<button type="button" class="chip selected-only" data-topic="${t}">${t}<span class="x">×</span></button>`
+        );
+      }
+      el.innerHTML = parts.length
+        ? `<span style="margin-right:4px">已选</span>${parts.join("")}`
+        : `<span style="color:var(--muted)">未施加语言/标签/关键词筛选</span>`;
+
+      el.querySelectorAll("[data-topic]").forEach((btn) => {
+        btn.addEventListener("click", () => toggleTopic(btn.getAttribute("data-topic")));
+      });
+      el.querySelectorAll("[data-lang]").forEach((btn) => {
+        btn.addEventListener("click", () => toggleLanguage(btn.getAttribute("data-lang")));
+      });
+    }
+
+    function renderLangFacets() {
+      const facets = buildLangFacets(filteredWithoutLang()).slice(0, 20);
+      const el = $("langFacets");
+      if (!facets.length) {
+        el.innerHTML = `<span style="font-size:12px;color:var(--muted)">当前条件下无语言数据</span>`;
+        return;
+      }
+      el.innerHTML = facets
+        .map(({ name, count }) => {
+          const active = state.languages.includes(name) ? " active" : "";
+          return `<button type="button" class="chip${active}" data-lang="${escapeHtml(name)}"><span class="lang-dot" style="background:${langColor(name)};width:7px;height:7px"></span>${escapeHtml(name)}<span class="count">${count}</span></button>`;
+        })
+        .join("");
+      el.querySelectorAll("[data-lang]").forEach((btn) => {
+        btn.addEventListener("click", () => toggleLanguage(btn.getAttribute("data-lang")));
+      });
+    }
+
+    function renderFacets() {
+      const facets = buildFacets(filteredBase()).slice(0, 28);
+      const el = $("facetChips");
+      if (!facets.length) {
+        el.innerHTML = `<span style="font-size:12px;color:var(--muted)">当前条件下无可用标签</span>`;
+        return;
+      }
+      el.innerHTML = facets
+        .map(({ topic, count }) => {
+          const active = state.topics.includes(topic) ? " active" : "";
+          return `<button type="button" class="chip${active}" data-topic="${topic}">${topic}<span class="count">${count}</span></button>`;
+        })
+        .join("");
+      el.querySelectorAll("[data-topic]").forEach((btn) => {
+        btn.addEventListener("click", () => toggleTopic(btn.getAttribute("data-topic")));
+      });
+    }
+
+    function descHtml(item) {
+      if (!item.description) return "";
+      return `<p class="repo-desc" title="${escapeHtml(item.description)}">${escapeHtml(item.description)}</p>`;
+    }
+
+    function trackBadgeHtml(item) {
+      if (state.board === "tracked") {
+        const st = item.status || "tracking";
+        const cls =
+          st === "on_board" ? "" : st === "pending" ? " pending" : " user-only";
+        return `<span class="badge-track${cls}">${statusLabel(st)}</span>`;
+      }
+      if (isTracked(item.full_name)) {
+        return `<span class="badge-track">已跟踪</span>`;
+      }
+      return "";
+    }
+
+    function renderTrackedPanel() {
+      const panel = $("trackedPanel");
+      const list = $("trackedList");
+      const show = state.board === "tracked";
+      panel.classList.toggle("show", show);
+      if (!show) return;
+
+      if (!trackedRepos.length) {
+        list.innerHTML = `<div class="tracked-empty">还没有跟踪仓库。点击右上角「＋ 添加仓库」开始。</div>`;
+        return;
+      }
+
+      // Filtered view when filters applied — use filteredRows for consistency
+      const rows = filteredRows();
+      if (!rows.length) {
+        list.innerHTML = `<div class="tracked-empty">无匹配的跟踪仓库</div>`;
+        return;
+      }
+
+      list.innerHTML = rows
+        .map((item) => {
+          const st = item.status || "tracking";
+          const cls =
+            st === "on_board" ? "on_board" : st === "pending" ? "pending" : "tracking";
+          return `<div class="tracked-row" data-repo="${escapeHtml(item.full_name)}">
+            <div class="tr-name">
+              <a href="https://github.com/${escapeHtml(item.full_name)}" target="_blank" rel="noopener">${escapeHtml(item.full_name)}</a>
+              <span class="badge-track${st === "pending" ? " pending" : st === "tracking" ? " user-only" : ""}">${statusLabel(st)}</span>
+              <div style="font-size:12px;color:var(--text-3);font-weight:400;margin-top:2px">${escapeHtml(item.description || "")}</div>
+            </div>
+            <div class="tr-meta">${compact(item.stars)} ★ · ${compact(item.forks)} ⑂ · 添加于 ${escapeHtml(item.added_at || "—")}</div>
+            <div class="tr-status">${cls === "on_board" ? "也在今日总榜/趋势中" : cls === "pending" ? "等待下次 collector 快照" : "每日独立快照"}</div>
+            <div class="tr-actions">
+              <button type="button" class="btn" data-history="${escapeHtml(item.full_name)}">趋势</button>
+              <button type="button" class="btn" data-untrack="${escapeHtml(item.full_name)}">取消跟踪</button>
+            </div>
+          </div>`;
+        })
+        .join("");
+
+      list.querySelectorAll("[data-history]").forEach((btn) => {
+        btn.addEventListener("click", () => openModal(btn.getAttribute("data-history")));
+      });
+      list.querySelectorAll("[data-untrack]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const name = btn.getAttribute("data-untrack");
+          trackedRepos = trackedRepos.filter(
+            (t) => t.full_name.toLowerCase() !== name.toLowerCase()
+          );
+          toast(`已取消跟踪 ${name}`);
+          render();
+        });
+      });
+    }
+
+    function renderTable(rows) {
+      const tbody = $("tbody");
+      const empty = $("empty");
+      const maxTopics = state.density === "compact" ? 2 : 4;
+
+      if (!rows.length) {
+        tbody.innerHTML = "";
+        empty.hidden = false;
+        $("cards").innerHTML = "";
+        return;
+      }
+      empty.hidden = true;
+
+      tbody.innerHTML = rows
+        .map((item, idx) => {
+          const rank = idx + 1;
+          const { owner, name } = splitName(item.full_name);
+          const initials = owner.slice(0, 1).toUpperCase();
+
+          return `<tr data-repo="${escapeHtml(item.full_name)}">
+            <td class="rank ${rankClass(rank)}">${String(rank).padStart(2, "0")}</td>
+            <td class="repo-cell">
+              <div class="repo-head">
+                <div class="avatar" title="${owner}">${initials}</div>
+                <div class="repo-name">
+                  <a href="https://github.com/${escapeHtml(item.full_name)}" target="_blank" rel="noopener">
+                    <span class="owner">${escapeHtml(owner)}</span><span class="slash">/</span><span class="name">${escapeHtml(name)}</span>
+                  </a>
+                  ${trackBadgeHtml(item)}
+                </div>
+                <div class="row-actions">
+                  <button type="button" title="在 GitHub 打开" data-open-gh="${escapeHtml(item.full_name)}">↗</button>
+                  <button type="button" title="历史趋势" data-history="${escapeHtml(item.full_name)}">📈</button>
+                </div>
+              </div>
+              ${descHtml(item)}
+              <div class="topic-row">${topicChipsHtml(item.topics, maxTopics)}</div>
+            </td>
+            <td class="lang-cell">${languagesCellHtml(item)}</td>
+            <td class="num metric-primary">${primaryCell(item)}</td>
+            <td class="num metric-secondary">${secondaryCell(item)}</td>
+          </tr>`;
+        })
+        .join("");
+
+      tbody.querySelectorAll("[data-topic]").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.preventDefault();
+          toggleTopic(btn.getAttribute("data-topic"));
+        });
+      });
+      tbody.querySelectorAll("[data-lang]").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.preventDefault();
+          toggleLanguage(btn.getAttribute("data-lang"));
+        });
+      });
+      wireLangExpand(tbody);
+      tbody.querySelectorAll("[data-history]").forEach((btn) => {
+        btn.addEventListener("click", () => openModal(btn.getAttribute("data-history")));
+      });
+      tbody.querySelectorAll("[data-open-gh]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          window.open("https://github.com/" + btn.getAttribute("data-open-gh"), "_blank");
+        });
+      });
+
+      $("cards").innerHTML = rows
+        .map((item, idx) => {
+          const rank = idx + 1;
+          const { owner, name } = splitName(item.full_name);
+          return `<article class="card">
+            <div class="card-top">
+              <span class="rank ${rankClass(rank)}">${String(rank).padStart(2, "0")}</span>
+              <div style="min-width:0;flex:1">
+                <div class="repo-name">
+                  <span class="owner">${escapeHtml(owner)}</span><span class="slash">/</span><span class="name">${escapeHtml(name)}</span>
+                </div>
+                ${descHtml(item)}
+                <div style="margin-top:8px">${languagesCellHtml(item)}</div>
+                <div class="topic-row">${topicChipsHtml(item.topics, 4)}</div>
+              </div>
+              <div class="card-metric">
+                <div class="metric-primary">${primaryCell(item)}</div>
+                <div class="metric-secondary" style="margin-top:2px">${secondaryCell(item)}</div>
+              </div>
+            </div>
+          </article>`;
+        })
+        .join("");
+
+      $("cards").querySelectorAll("[data-topic]").forEach((btn) => {
+        btn.addEventListener("click", () => toggleTopic(btn.getAttribute("data-topic")));
+      });
+      $("cards").querySelectorAll("[data-lang]").forEach((btn) => {
+        btn.addEventListener("click", () => toggleLanguage(btn.getAttribute("data-lang")));
+      });
+      wireLangExpand($("cards"));
+    }
+
+    function render() {
+      updatePrimaryHeader();
+      document.body.classList.toggle("density-compact", state.density === "compact");
+      document.body.classList.toggle("density-comfortable", state.density === "comfortable");
+      document.body.classList.toggle("hide-desc", !state.showDesc);
+      $("metricGroup").style.display = state.board === "top" ? "" : "none";
+
+      const isTrackedBoard = state.board === "tracked";
+      $("tableWrap").style.display = isTrackedBoard ? "none" : "";
+      $("cards").style.display = isTrackedBoard ? "none" : "";
+
+      const rows = filteredRows();
+      const langHint = state.languages.length
+        ? `lang×${state.languages.length}`
+        : "全部语言";
+      const boardHint =
+        state.board === "tracked"
+          ? "我的跟踪"
+          : state.board === "trending"
+            ? "趋势榜"
+            : "总榜";
+      $("resultCount").textContent = `${rows.length} 个结果 · ${boardHint} · ${langHint} · tag ${state.topicMode.toUpperCase()}`;
+      $("clearFilters").disabled = !hasActiveFilters();
+
+      renderLangFacets();
+      renderFacets();
+      renderActiveFilters();
+      renderTrackedPanel();
+      if (!isTrackedBoard) {
+        renderTable(rows);
+      } else {
+        $("tbody").innerHTML = "";
+        $("empty").hidden = true;
+      }
+    }
+
+    function toggleTopic(topic) {
+      if (!topic) return;
+      const i = state.topics.indexOf(topic);
+      if (i >= 0) state.topics.splice(i, 1);
+      else state.topics.push(topic);
+      render();
+    }
+
+    function toggleLanguage(name) {
+      if (!name) return;
+      const i = state.languages.indexOf(name);
+      if (i >= 0) state.languages.splice(i, 1);
+      else state.languages.push(name);
+      render();
+    }
+
+    function clearFilters() {
+      state.q = "";
+      state.topics = [];
+      state.languages = [];
+      $("q").value = "";
+      render();
+    }
+
+    function openModal(fullName) {
+      const item =
+        DATA.find((d) => d.full_name === fullName) ||
+        trackedRepos.find((d) => d.full_name === fullName) ||
+        GH_CATALOG[fullName.toLowerCase()];
+      if (!item) return;
+      $("modalTitle").textContent = fullName;
+      $("modalGh").href = "https://github.com/" + fullName;
+      const svg = $("modalSpark");
+      const values = item.spark || [0];
+      const w = 320, h = 80;
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const span = max - min || 1;
+      const pad = 8;
+      const pts = values.map((v, i) => {
+        const x =
+          values.length === 1
+            ? w / 2
+            : pad + (i / (values.length - 1)) * (w - pad * 2);
+        const y = h - pad - ((v - min) / span) * (h - pad * 2);
+        return `${x},${y}`;
+      });
+      svg.innerHTML = `<polyline fill="none" stroke="${sparkColor()}" stroke-width="2" points="${pts.join(" ")}" />`;
+      $("modal").classList.add("open");
+    }
+
+    function closeModal() {
+      $("modal").classList.remove("open");
+    }
+
+    function openAddModal() {
+      addPreviewPayload = null;
+      $("addRepoInput").value = "";
+      $("addRepoError").textContent = "";
+      $("addPreview").classList.remove("show");
+      $("addRepoSubmit").disabled = true;
+      $("addModal").classList.add("open");
+      setTimeout(() => $("addRepoInput").focus(), 50);
+    }
+
+    function closeAddModal() {
+      $("addModal").classList.remove("open");
+      addPreviewPayload = null;
+    }
+
+    function runLookup() {
+      const err = $("addRepoError");
+      const preview = $("addPreview");
+      const parsed = parseRepoInput($("addRepoInput").value);
+      addPreviewPayload = null;
+      $("addRepoSubmit").disabled = true;
+      preview.classList.remove("show");
+
+      if (!parsed) {
+        err.textContent = "无法解析：请输入 owner/name 或 https://github.com/owner/name";
+        return;
+      }
+      err.textContent = "";
+
+      const key = parsed.toLowerCase();
+      const hit = GH_CATALOG[key];
+      // Simulate unknown repos: if not in catalog, fabricate a "found" result from name
+      const data = hit || {
+        full_name: parsed.includes("/")
+          ? parsed.split("/")[0] + "/" + parsed.split("/")[1]
+          : parsed,
+        description: "（模拟）GitHub 元数据预览 — 正式环境由 GitHub API 实时拉取。",
+        languages: [{ name: "Unknown", pct: 100 }],
+        stars: 128,
+        forks: 12,
+        watchers: 8,
+        topics: [],
+        spark: [1, 2, 2, 3, 4, 5, 6],
+      };
+      // normalize full_name casing from input when mock
+      if (!hit) {
+        const [o, n] = parsed.split("/");
+        data.full_name = `${o}/${n}`;
+      }
+
+      $("pvName").textContent = data.full_name;
+      $("pvDesc").textContent = data.description || "无描述";
+      $("pvMeta").innerHTML = `
+        <span>${compact(data.stars)} ★</span>
+        <span>${compact(data.forks)} ⑂</span>
+        <span>${compact(data.watchers)} 👁</span>
+        <span>${(data.languages || []).map((l) => l.name).slice(0, 3).join(" · ") || "—"}</span>
+      `;
+
+      const statusEl = $("pvStatus");
+      statusEl.className = "pv-status";
+      if (isTracked(data.full_name)) {
+        statusEl.classList.add("tracking");
+        statusEl.textContent = "你已在跟踪此仓库";
+        $("addRepoSubmit").disabled = true;
+        $("addRepoSubmit").textContent = "已在跟踪";
+      } else if (isOnLeaderboard(data.full_name)) {
+        statusEl.classList.add("on-board");
+        statusEl.textContent = "已在今日榜内 — 仍可加入「我的跟踪」方便固定关注";
+        $("addRepoSubmit").disabled = false;
+        $("addRepoSubmit").textContent = "加入跟踪";
+      } else {
+        statusEl.classList.add("pending");
+        statusEl.textContent = "未在爬虫当日榜内 — 加入后进入跟踪队列与每日快照";
+        $("addRepoSubmit").disabled = false;
+        $("addRepoSubmit").textContent = "加入跟踪";
+      }
+
+      addPreviewPayload = data;
+      preview.classList.add("show");
+    }
+
+    function submitTrack() {
+      if (!addPreviewPayload) return;
+      const data = addPreviewPayload;
+      if (isTracked(data.full_name)) {
+        toast("已在跟踪列表中");
+        return;
+      }
+      const status = isOnLeaderboard(data.full_name) ? "on_board" : "pending";
+      trackedRepos.unshift({
+        ...data,
+        stars_today: null,
+        status,
+        added_at: "2026-08-07",
+        source: "user",
+      });
+      // After "next collect", pending becomes tracking — prototype flips after toast
+      toast(
+        status === "on_board"
+          ? `已跟踪 ${data.full_name}（已在榜）`
+          : `已加入跟踪 ${data.full_name}，等待首次快照…`
+      );
+      closeAddModal();
+      state.board = "tracked";
+      document.querySelectorAll("[data-board]").forEach((b) => {
+        b.classList.toggle("active", b.getAttribute("data-board") === "tracked");
+      });
+      render();
+      if (status === "pending") {
+        setTimeout(() => {
+          const t = trackedRepos.find(
+            (x) => x.full_name.toLowerCase() === data.full_name.toLowerCase()
+          );
+          if (t && t.status === "pending") {
+            t.status = "tracking";
+            toast(`${data.full_name} 首次快照完成（示意）`);
+            if (state.board === "tracked") render();
+          }
+        }, 2200);
+      }
+    }
+
+    document.querySelectorAll("[data-board]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll("[data-board]").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        state.board = btn.getAttribute("data-board");
+        render();
+      });
+    });
+
+    document.querySelectorAll('input[name="metric"]').forEach((input) => {
+      input.addEventListener("change", () => {
+        if (input.checked) {
+          state.metric = input.value;
+          render();
+        }
+      });
+    });
+
+    let qTimer;
+    $("q").addEventListener("input", (e) => {
+      clearTimeout(qTimer);
+      qTimer = setTimeout(() => {
+        state.q = e.target.value;
+        render();
+      }, 200);
+    });
+
+    document.querySelectorAll("[data-mode]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll("[data-mode]").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        state.topicMode = btn.getAttribute("data-mode");
+        render();
+      });
+    });
+
+    // checked = compact
+    $("density").addEventListener("change", (e) => {
+      state.density = e.target.checked ? "compact" : "comfortable";
+      render();
+    });
+
+    $("showDesc").addEventListener("change", (e) => {
+      state.showDesc = e.target.checked;
+      render();
+    });
+
+    $("clearFilters").addEventListener("click", clearFilters);
+    $("emptyClear").addEventListener("click", clearFilters);
+    $("modalClose").addEventListener("click", closeModal);
+    $("modal").addEventListener("click", (e) => {
+      if (e.target === $("modal")) closeModal();
+    });
+    $("btnAddRepo").addEventListener("click", openAddModal);
+    $("addModalClose").addEventListener("click", closeAddModal);
+    $("addRepoCancel").addEventListener("click", closeAddModal);
+    $("addModal").addEventListener("click", (e) => {
+      if (e.target === $("addModal")) closeAddModal();
+    });
+    $("addRepoLookup").addEventListener("click", runLookup);
+    $("addRepoSubmit").addEventListener("click", submitTrack);
+    $("addRepoInput").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        if (addPreviewPayload && !$("addRepoSubmit").disabled) submitTrack();
+        else runLookup();
+      }
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        closeModal();
+        closeAddModal();
+      }
+    });
+
+    document.querySelectorAll("[data-theme-set]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        applyTheme(btn.getAttribute("data-theme-set"));
+      });
+    });
+
+    // Sync toggle active state now that buttons exist
+    applyTheme(document.documentElement.getAttribute("data-theme") || getPreferredTheme());
+
+    render();
+  </script>
+</body>
+</html>

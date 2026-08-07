@@ -1,28 +1,15 @@
-services:
-  postgres:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: ght
-      POSTGRES_PASSWORD: ght
-      POSTGRES_DB: ghtrending
-    ports:
-      - "5433:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./dev/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ght"]
-      interval: 2s
-      timeout: 2s
-      retries: 10
+# PostgreSQL 使用宿主机本地实例（local-debug 栈，localhost:5432，trust 认证），
+# 不再通过 docker 启动 PG。容器内通过 host.docker.internal 访问宿主 PG。
+# 注意：若宿主 pg_hba 对 docker 网段要求 md5 口令，容器连接需相应配置密码。
 
+services:
   api:
     build:
       context: .
       dockerfile: Dockerfile
     profiles: ["stack"]
     environment:
-      DATABASE_URL: postgres://ght:ght@postgres:5432/ghtrending
+      DATABASE_URL: postgres://postgres@host.docker.internal:5432/ghtrending
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
@@ -30,9 +17,6 @@ services:
       STATIC_DIR: /app/frontend/dist
     ports:
       - "8000:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
     command: ["ght-api"]
 
   collector:
@@ -41,14 +25,11 @@ services:
       dockerfile: Dockerfile
     profiles: ["stack"]
     environment:
-      DATABASE_URL: postgres://ght:ght@postgres:5432/ghtrending
+      DATABASE_URL: postgres://postgres@host.docker.internal:5432/ghtrending
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       LANGUAGES: ${LANGUAGES:-}
       COLLECT_TIME: ${COLLECT_TIME:-09:00}
-    depends_on:
-      postgres:
-        condition: service_healthy
     # Default: single run then exit (k8s CronJob style)
     command: ["ght-collector", "--once"]
     restart: "no"
@@ -60,16 +41,10 @@ services:
       dockerfile: Dockerfile
     profiles: ["daemon"]
     environment:
-      DATABASE_URL: postgres://ght:ght@postgres:5432/ghtrending
+      DATABASE_URL: postgres://postgres@host.docker.internal:5432/ghtrending
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       LANGUAGES: ${LANGUAGES:-}
       COLLECT_TIME: ${COLLECT_TIME:-09:00}
-    depends_on:
-      postgres:
-        condition: service_healthy
     command: ["ght-collector"]
     restart: unless-stopped
-
-volumes:
-  pgdata:

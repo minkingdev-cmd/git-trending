@@ -224,7 +224,7 @@ mod tests {
     async fn test_state() -> AppState {
         let url = std::env::var("DATABASE_URL_TEST_API")
             .or_else(|_| std::env::var("DATABASE_URL_TEST"))
-            .unwrap_or_else(|_| "postgres://ght:ght@localhost:5433/ghtrending_test_api".into());
+            .unwrap_or_else(|_| "postgres://postgres@localhost:5432/ghtrending_test_api".into());
         let pool = db::pg_pool(&url)
             .await
             .expect("test db unreachable; run `make db`");

@@ -230,7 +230,7 @@ mod tests {
 
     async fn test_pool() -> PgPool {
         let url = std::env::var("DATABASE_URL_TEST")
-            .unwrap_or_else(|_| "postgres://ght:ght@localhost:5433/ghtrending_test".into());
+            .unwrap_or_else(|_| "postgres://postgres@localhost:5432/ghtrending_test".into());
         let pool = db::pg_pool(&url).await.expect("test db unreachable; run `make db`");
         db::migrate(&pool).await.unwrap();
         sqlx::query("TRUNCATE repos, snapshots, users, invite_codes, refresh_tokens")
