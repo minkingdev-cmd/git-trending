@@ -4,21 +4,40 @@ use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::{Json, Router};
-use ght_core::models::{Board, LeaderboardFilter};
+use ght_core::models::{Board, LanguageShare, LeaderboardFilter, TopicMode};
 use ght_core::store as store;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Deserialize)]
 pub struct TopParams {
     pub metric: String,
+    /// Legacy single primary-language filter (`repos.language` equality).
     pub language: Option<String>,
+    /// Comma-separated multi-language OR filter against `language_names`.
+    pub languages: Option<String>,
+    /// Comma-separated topics (lowercase).
+    pub topics: Option<String>,
+    /// `and` | `or`; default `and`.
+    pub topic_mode: Option<String>,
+    /// Keyword search over full_name, description, topics, language names.
+    pub q: Option<String>,
     /// Optional snapshot date YYYY-MM-DD; defaults to latest
     pub date: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct TrendingParams {
+    /// Legacy single primary-language filter (`repos.language` equality).
     pub language: Option<String>,
+    /// Comma-separated multi-language OR filter against `language_names`.
+    pub languages: Option<String>,
+    /// Comma-separated topics (lowercase).
+    pub topics: Option<String>,
+    /// `and` | `or`; default `and`.
+    pub topic_mode: Option<String>,
+    /// Keyword search over full_name, description, topics, language names.
+    pub q: Option<String>,
     /// Optional snapshot date YYYY-MM-DD; defaults to latest
     pub date: Option<String>,
 }
@@ -31,41 +50,296 @@ pub struct LanguageParams {
     pub date: Option<String>,
 }
 
+/// API language share DTO (name + pct; bytes optional).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LanguageShareDto {
+    pub name: String,
+    pub pct: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<i64>,
+}
+
+impl From<LanguageShare> for LanguageShareDto {
+    fn from(s: LanguageShare) -> Self {
+        Self {
+            name: s.name,
+            pct: s.pct,
+            bytes: s.bytes,
+        }
+    }
+}
+
 #[derive(Serialize)]
 pub struct LeaderboardItem {
     pub rank: i64,
     pub full_name: String,
     pub html_url: String,
     pub description: Option<String>,
+    /// Deprecated primary language; prefer `languages`.
     pub language: Option<String>,
+    pub topics: Vec<String>,
+    pub languages: Vec<LanguageShareDto>,
     pub stars: i32,
     pub forks: i32,
     pub watchers: Option<i32>,
     pub stars_today: Option<i32>,
+    /// Always false until Task 7/8 wires user tracking.
+    pub tracked_by_me: bool,
+}
+
+#[derive(Serialize)]
+pub struct TopicFacet {
+    pub topic: String,
+    pub count: i64,
+}
+
+#[derive(Serialize)]
+pub struct LanguageFacet {
+    pub language: String,
+    pub count: i64,
 }
 
 #[derive(Serialize)]
 pub struct LeaderboardResp {
     pub date: String,
     pub board: String,
+    /// Echo of legacy single-language query param.
     pub language: Option<String>,
+    /// Echo of multi-language filter (comma-split, non-empty).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub languages_filter: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub q: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub topics_filter: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub topic_mode: Option<String>,
     pub items: Vec<LeaderboardItem>,
+    /// v1: result-set unnest counts from filtered `items` (not full disjunctive facets).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub topic_facets: Option<Vec<TopicFacet>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language_facets: Option<Vec<LanguageFacet>>,
+}
+
+/// Parse comma-separated list; trim, drop empty. For topics, also lowercase.
+fn parse_csv_list(raw: Option<&str>, lowercase: bool) -> Vec<String> {
+    let Some(s) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return vec![];
+    };
+    let mut out: Vec<String> = s
+        .split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(|p| {
+            if lowercase {
+                p.to_lowercase()
+            } else {
+                p.to_string()
+            }
+        })
+        .collect();
+    // Preserve order but dedupe while keeping first occurrence.
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|x| seen.insert(x.clone()));
+    out
+}
+
+fn parse_topic_mode(raw: Option<&str>) -> Result<TopicMode, ()> {
+    match raw.map(str::trim).filter(|s| !s.is_empty()) {
+        None => Ok(TopicMode::And),
+        Some(s) => TopicMode::parse(&s.to_lowercase()).ok_or(()),
+    }
+}
+
+/// Build filter from parsed query pieces.
+///
+/// Backward compat:
+/// - Legacy `language` → `LeaderboardFilter.language` (primary equality on
+///   `repos.language`). Works even when `language_names` is empty.
+/// - Multi-select `languages` → `LeaderboardFilter.languages` (OR on
+///   `language_names`).
+/// - When only legacy `language` is present, response still echoes it under
+///   `languages_filter` for newer clients; it is **not** also bound as the
+///   multi-lang SQL filter (would false-negative on empty `language_names`).
+struct ParsedFilters {
+    language: Option<String>,
+    /// Multi-language filter as provided by `languages=` query (not mirrored).
+    languages: Vec<String>,
+    /// Echo for response: multi-lang param, or legacy single language alone.
+    languages_echo: Vec<String>,
+    topics: Vec<String>,
+    topic_mode: TopicMode,
+    q: Option<String>,
+}
+
+fn parse_filters(
+    language: Option<&str>,
+    languages_csv: Option<&str>,
+    topics_csv: Option<&str>,
+    topic_mode: Option<&str>,
+    q: Option<&str>,
+) -> Result<ParsedFilters, &'static str> {
+    let topic_mode = parse_topic_mode(topic_mode).map_err(|_| "topic_mode must be and|or")?;
+    let languages = parse_csv_list(languages_csv, false);
+    let language = language
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let languages_echo = if !languages.is_empty() {
+        languages.clone()
+    } else if let Some(ref lang) = language {
+        vec![lang.clone()]
+    } else {
+        vec![]
+    };
+    let topics = parse_csv_list(topics_csv, true);
+    let q = q.map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    Ok(ParsedFilters {
+        language,
+        languages,
+        languages_echo,
+        topics,
+        topic_mode,
+        q,
+    })
+}
+
+fn languages_from_json(v: &serde_json::Value) -> Vec<LanguageShareDto> {
+    match serde_json::from_value::<Vec<LanguageShare>>(v.clone()) {
+        Ok(shares) => shares.into_iter().map(LanguageShareDto::from).collect(),
+        Err(_) => vec![],
+    }
 }
 
 fn to_items(rows: Vec<ght_core::models::LeaderboardRow>) -> Vec<LeaderboardItem> {
     rows.into_iter()
-        .map(|r| LeaderboardItem {
-            rank: r.rank,
-            full_name: r.full_name,
-            html_url: r.html_url,
-            description: r.description,
-            language: r.language,
-            stars: r.stars,
-            forks: r.forks,
-            watchers: r.watchers,
-            stars_today: r.stars_today,
+        .map(|r| {
+            let languages = languages_from_json(&r.languages);
+            LeaderboardItem {
+                rank: r.rank,
+                full_name: r.full_name,
+                html_url: r.html_url,
+                description: r.description,
+                language: r.language,
+                topics: r.topics,
+                languages,
+                stars: r.stars,
+                forks: r.forks,
+                watchers: r.watchers,
+                stars_today: r.stars_today,
+                tracked_by_me: false,
+            }
         })
         .collect()
+}
+
+/// v1 facets: unnest from the filtered result set (not disjunctive over board/date).
+fn facets_from_items(items: &[LeaderboardItem]) -> (Vec<TopicFacet>, Vec<LanguageFacet>) {
+    let mut topic_counts: HashMap<String, i64> = HashMap::new();
+    let mut lang_counts: HashMap<String, i64> = HashMap::new();
+    for item in items {
+        for t in &item.topics {
+            *topic_counts.entry(t.clone()).or_insert(0) += 1;
+        }
+        // Prefer multi-lang shares; fall back to primary language.
+        if item.languages.is_empty() {
+            if let Some(ref lang) = item.language {
+                *lang_counts.entry(lang.clone()).or_insert(0) += 1;
+            }
+        } else {
+            for share in &item.languages {
+                *lang_counts.entry(share.name.clone()).or_insert(0) += 1;
+            }
+        }
+    }
+    let mut topic_facets: Vec<TopicFacet> = topic_counts
+        .into_iter()
+        .map(|(topic, count)| TopicFacet { topic, count })
+        .collect();
+    topic_facets.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.topic.cmp(&b.topic)));
+    let mut language_facets: Vec<LanguageFacet> = lang_counts
+        .into_iter()
+        .map(|(language, count)| LanguageFacet { language, count })
+        .collect();
+    language_facets.sort_by(|a, b| {
+        b.count
+            .cmp(&a.count)
+            .then_with(|| a.language.cmp(&b.language))
+    });
+    (topic_facets, language_facets)
+}
+
+fn empty_resp(board: Board, parsed: &ParsedFilters) -> LeaderboardResp {
+    LeaderboardResp {
+        date: String::new(),
+        board: board.as_str().to_string(),
+        language: parsed.language.clone(),
+        languages_filter: if parsed.languages_echo.is_empty() {
+            None
+        } else {
+            Some(parsed.languages_echo.clone())
+        },
+        q: parsed.q.clone(),
+        topics_filter: if parsed.topics.is_empty() {
+            None
+        } else {
+            Some(parsed.topics.clone())
+        },
+        topic_mode: Some(parsed.topic_mode.as_str().to_string()),
+        items: vec![],
+        topic_facets: Some(vec![]),
+        language_facets: Some(vec![]),
+    }
+}
+
+fn ok_resp(
+    board: Board,
+    date: chrono::NaiveDate,
+    parsed: &ParsedFilters,
+    rows: Vec<ght_core::models::LeaderboardRow>,
+) -> LeaderboardResp {
+    let items = to_items(rows);
+    let (topic_facets, language_facets) = facets_from_items(&items);
+    LeaderboardResp {
+        date: date.format("%Y-%m-%d").to_string(),
+        board: board.as_str().to_string(),
+        language: parsed.language.clone(),
+        languages_filter: if parsed.languages_echo.is_empty() {
+            None
+        } else {
+            Some(parsed.languages_echo.clone())
+        },
+        q: parsed.q.clone(),
+        topics_filter: if parsed.topics.is_empty() {
+            None
+        } else {
+            Some(parsed.topics.clone())
+        },
+        topic_mode: Some(parsed.topic_mode.as_str().to_string()),
+        items,
+        topic_facets: Some(topic_facets),
+        language_facets: Some(language_facets),
+    }
+}
+
+/// Bind owned filter strings into a LeaderboardFilter with the right lifetimes.
+fn store_filter<'a>(parsed: &'a ParsedFilters) -> LeaderboardFilter<'a> {
+    LeaderboardFilter {
+        language: parsed.language.as_deref(),
+        languages: if parsed.languages.is_empty() {
+            None
+        } else {
+            Some(parsed.languages.as_slice())
+        },
+        topics: if parsed.topics.is_empty() {
+            None
+        } else {
+            Some(parsed.topics.as_slice())
+        },
+        topic_mode: parsed.topic_mode,
+        q: parsed.q.as_deref(),
+    }
 }
 
 pub fn router() -> Router<AppState> {
@@ -95,6 +369,22 @@ async fn top(
                 .into_response()
         }
     };
+    let parsed = match parse_filters(
+        params.language.as_deref(),
+        params.languages.as_deref(),
+        params.topics.as_deref(),
+        params.topic_mode.as_deref(),
+        params.q.as_deref(),
+    ) {
+        Ok(p) => p,
+        Err(msg) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": msg})),
+            )
+                .into_response()
+        }
+    };
     let date = match crate::routes_history::resolve_date(
         &state.pool,
         board,
@@ -110,20 +400,9 @@ async fn top(
             )
                 .into_response()
         }
-        None => {
-            return Json(LeaderboardResp {
-                date: String::new(),
-                board: board.as_str().to_string(),
-                language: params.language.clone(),
-                items: vec![],
-            })
-            .into_response()
-        }
+        None => return Json(empty_resp(board, &parsed)).into_response(),
     };
-    let filter = LeaderboardFilter {
-        language: params.language.as_deref(),
-        ..LeaderboardFilter::empty()
-    };
+    let filter = store_filter(&parsed);
     let rows = match board {
         Board::TopStars => store::top_by_stars(&state.pool, date, filter, 100).await,
         Board::TopForks => store::top_by_forks(&state.pool, date, filter, 100).await,
@@ -131,13 +410,7 @@ async fn top(
         _ => unreachable!(),
     };
     match rows {
-        Ok(rows) => Json(LeaderboardResp {
-            date: date.format("%Y-%m-%d").to_string(),
-            board: board.as_str().to_string(),
-            language: params.language.clone(),
-            items: to_items(rows),
-        })
-        .into_response(),
+        Ok(rows) => Json(ok_resp(board, date, &parsed, rows)).into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
@@ -148,6 +421,22 @@ async fn trending(
     Query(params): Query<TrendingParams>,
 ) -> impl IntoResponse {
     let board = Board::TrendingDaily;
+    let parsed = match parse_filters(
+        params.language.as_deref(),
+        params.languages.as_deref(),
+        params.topics.as_deref(),
+        params.topic_mode.as_deref(),
+        params.q.as_deref(),
+    ) {
+        Ok(p) => p,
+        Err(msg) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": msg})),
+            )
+                .into_response()
+        }
+    };
     let date = match crate::routes_history::resolve_date(
         &state.pool,
         board,
@@ -163,28 +452,11 @@ async fn trending(
             )
                 .into_response()
         }
-        None => {
-            return Json(LeaderboardResp {
-                date: String::new(),
-                board: board.as_str().to_string(),
-                language: params.language.clone(),
-                items: vec![],
-            })
-            .into_response()
-        }
+        None => return Json(empty_resp(board, &parsed)).into_response(),
     };
-    let filter = LeaderboardFilter {
-        language: params.language.as_deref(),
-        ..LeaderboardFilter::empty()
-    };
+    let filter = store_filter(&parsed);
     match store::trending(&state.pool, date, filter, 100).await {
-        Ok(rows) => Json(LeaderboardResp {
-            date: date.format("%Y-%m-%d").to_string(),
-            board: board.as_str().to_string(),
-            language: params.language.clone(),
-            items: to_items(rows),
-        })
-        .into_response(),
+        Ok(rows) => Json(ok_resp(board, date, &parsed, rows)).into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
@@ -295,10 +567,13 @@ mod tests {
     use crate::auth::tokens;
     use crate::state::AppState;
 
+    use super::{parse_csv_list, parse_filters, parse_topic_mode, languages_from_json};
+    use ght_core::models::TopicMode;
+
     async fn test_state() -> AppState {
         let url = std::env::var("DATABASE_URL_TEST_API")
             .or_else(|_| std::env::var("DATABASE_URL_TEST"))
-            .unwrap_or_else(|_| "postgres://ght:ght@localhost:5433/ghtrending_test_api".into());
+            .unwrap_or_else(|_| "postgres://postgres@localhost:5432/ghtrending_test_api".into());
         let pool = db::pg_pool(&url)
             .await
             .expect("test db unreachable; run `make db`");
@@ -328,6 +603,27 @@ mod tests {
             topics: vec![],
             languages_json: RepoInput::languages_empty(),
             language_names: vec![],
+        }
+    }
+
+    fn repo_enriched(
+        full_name: &str,
+        lang: Option<&str>,
+        topics: &[&str],
+        languages: serde_json::Value,
+        language_names: &[&str],
+    ) -> RepoInput {
+        let (owner, name) = full_name.split_once('/').unwrap();
+        RepoInput {
+            full_name: full_name.into(),
+            owner: owner.into(),
+            name: name.into(),
+            html_url: format!("https://github.com/{full_name}"),
+            language: lang.map(String::from),
+            description: Some(format!("desc for {full_name}")),
+            topics: topics.iter().map(|t| t.to_string()).collect(),
+            languages_json: languages,
+            language_names: language_names.iter().map(|s| s.to_string()).collect(),
         }
     }
 
@@ -421,6 +717,41 @@ mod tests {
         (status, String::from_utf8(bytes.to_vec()).unwrap())
     }
 
+    #[test]
+    fn parse_csv_topics_lowercase_and_dedupe() {
+        let v = parse_csv_list(Some(" AI, llm ,AI, "), true);
+        assert_eq!(v, vec!["ai".to_string(), "llm".to_string()]);
+    }
+
+    #[test]
+    fn parse_topic_mode_defaults_and() {
+        assert_eq!(parse_topic_mode(None).unwrap(), TopicMode::And);
+        assert_eq!(parse_topic_mode(Some("or")).unwrap(), TopicMode::Or);
+        assert!(parse_topic_mode(Some("xor")).is_err());
+    }
+
+    #[test]
+    fn legacy_language_echoes_but_not_multi_filter() {
+        let p = parse_filters(Some("Rust"), None, None, None, None).unwrap();
+        assert_eq!(p.language.as_deref(), Some("Rust"));
+        assert!(p.languages.is_empty(), "legacy must not bind multi-lang SQL");
+        assert_eq!(p.languages_echo, vec!["Rust".to_string()]);
+    }
+
+    #[test]
+    fn languages_from_json_parses_shares() {
+        let v = serde_json::json!([
+            {"name": "Rust", "pct": 90.0, "bytes": 900},
+            {"name": "Python", "pct": 10.0}
+        ]);
+        let shares = languages_from_json(&v);
+        assert_eq!(shares.len(), 2);
+        assert_eq!(shares[0].name, "Rust");
+        assert_eq!(shares[0].pct, 90.0);
+        assert_eq!(shares[0].bytes, Some(900));
+        assert_eq!(shares[1].bytes, None);
+    }
+
     #[tokio::test]
     #[serial]
     async fn top_by_stars_and_language_filter() {
@@ -435,6 +766,10 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(v["items"][0]["rank"], 1);
         assert_eq!(v["items"][0]["full_name"], "a/py1");
+        // Enriched fields always present.
+        assert!(v["items"][0]["topics"].is_array());
+        assert!(v["items"][0]["languages"].is_array());
+        assert_eq!(v["items"][0]["tracked_by_me"], false);
 
         let (_, body) = get(
             state.clone(),
@@ -468,6 +803,149 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(v["items"][0]["full_name"], "a/py1");
         assert_eq!(v["items"][0]["stars_today"], 30);
+    }
+
+    /// Task 4: trending + topics filter; items expose topics field.
+    #[tokio::test]
+    #[serial]
+    async fn trending_topics_filter_and_item_fields() {
+        let state = test_state().await;
+        let date = NaiveDate::from_ymd_opt(2026, 8, 6).unwrap();
+        let cookie = auth_cookie(&state);
+
+        let shares_ai = serde_json::json!([
+            {"name": "Python", "pct": 80.0, "bytes": 800},
+            {"name": "Rust", "pct": 20.0, "bytes": 200}
+        ]);
+        let shares_other = serde_json::json!([{"name": "Go", "pct": 100.0, "bytes": 100}]);
+
+        for (name, topics, langs_json, lang_names, stars_today) in [
+            (
+                "t/ai-bot",
+                &["ai", "llm"][..],
+                shares_ai.clone(),
+                &["Python", "Rust"][..],
+                50,
+            ),
+            (
+                "t/web-app",
+                &["web"][..],
+                shares_other.clone(),
+                &["Go"][..],
+                40,
+            ),
+        ] {
+            let id = store::upsert_repo(
+                &state.pool,
+                &repo_enriched(
+                    name,
+                    Some(lang_names[0]),
+                    topics,
+                    langs_json,
+                    lang_names,
+                ),
+                date,
+            )
+            .await
+            .unwrap();
+            store::upsert_snapshot(
+                &state.pool,
+                id,
+                date,
+                Board::TrendingDaily,
+                &SnapshotInput {
+                    stars: stars_today * 10,
+                    forks: 1,
+                    watchers: None,
+                    stars_today: Some(stars_today),
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        let (status, body) = get(
+            state.clone(),
+            "/api/leaderboard/trending?topics=ai",
+            Some(cookie.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let items = v["items"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["full_name"], "t/ai-bot");
+        assert!(items[0]["topics"].is_array());
+        let topics: Vec<&str> = items[0]["topics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t.as_str().unwrap())
+            .collect();
+        assert!(topics.contains(&"ai"));
+        assert!(topics.contains(&"llm"));
+        assert_eq!(items[0]["languages"].as_array().unwrap().len(), 2);
+        assert_eq!(items[0]["languages"][0]["name"], "Python");
+        assert_eq!(items[0]["tracked_by_me"], false);
+        assert_eq!(v["topics_filter"][0], "ai");
+        assert_eq!(v["topic_mode"], "and");
+
+        // Facets from result set (only the matched repo).
+        let tf = v["topic_facets"].as_array().unwrap();
+        assert!(tf.iter().any(|f| f["topic"] == "ai" && f["count"] == 1));
+
+        // Multi topics AND keeps only ai+llm repo; OR would include web if we asked web|ai.
+        let (status, body) = get(
+            state.clone(),
+            "/api/leaderboard/trending?topics=ai,llm&topic_mode=and",
+            Some(cookie.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["items"].as_array().unwrap().len(), 1);
+
+        // languages multi OR via language_names.
+        let (status, body) = get(
+            state.clone(),
+            "/api/leaderboard/trending?languages=Go",
+            Some(cookie.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["items"].as_array().unwrap().len(), 1);
+        assert_eq!(v["items"][0]["full_name"], "t/web-app");
+        assert_eq!(v["languages_filter"][0], "Go");
+
+        // q keyword on description/topic.
+        let (status, body) = get(
+            state.clone(),
+            "/api/leaderboard/trending?q=ai-bot",
+            Some(cookie),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["items"].as_array().unwrap().len(), 1);
+        assert_eq!(v["items"][0]["full_name"], "t/ai-bot");
+        assert_eq!(v["q"], "ai-bot");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn invalid_topic_mode_rejected() {
+        let state = test_state().await;
+        seed(&state).await;
+        let cookie = auth_cookie(&state);
+        let (status, body) = get(
+            state,
+            "/api/leaderboard/trending?topic_mode=xor",
+            Some(cookie),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.contains("topic_mode"));
     }
 
     #[tokio::test]
