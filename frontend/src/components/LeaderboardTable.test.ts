@@ -12,10 +12,16 @@ const item: LeaderboardItem = {
   html_url: "https://github.com/owner/repo",
   description: "desc",
   language: "TypeScript",
+  topics: ["typescript", "web"],
+  languages: [
+    { name: "TypeScript", pct: 80 },
+    { name: "CSS", pct: 20 },
+  ],
   stars: 455_000,
   forks: 50_000,
   watchers: 12_000,
   stars_today: 320,
+  tracked_by_me: false,
 };
 
 describe("primaryHeader", () => {

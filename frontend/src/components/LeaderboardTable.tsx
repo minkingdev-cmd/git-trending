@@ -1,11 +1,18 @@
+import { useState } from "react";
 import { compact } from "../api";
-import type { LeaderboardItem } from "../types";
-import type { BoardKind, Metric } from "./Controls";
+import { formatPct, langColor } from "../langColors";
+import type { LanguageShare, LeaderboardItem } from "../types";
+import type { BoardKind, Metric } from "../urlState";
 
 interface Props {
   items: LeaderboardItem[];
   board: BoardKind;
   metric: Metric;
+  density: "compact" | "comfortable";
+  selectedTopics: string[];
+  selectedLanguages: string[];
+  onToggleTopic?: (topic: string) => void;
+  onToggleLanguage?: (lang: string) => void;
   onSelectRepo?: (fullName: string) => void;
 }
 
@@ -63,10 +70,134 @@ function rankClass(rank: number): string {
   return "rank";
 }
 
+function TopicRow({
+  topics,
+  selectedTopics,
+  maxShow,
+  onToggleTopic,
+}: {
+  topics: string[];
+  selectedTopics: string[];
+  maxShow: number;
+  onToggleTopic?: (topic: string) => void;
+}) {
+  if (!topics.length) return null;
+  const shown = topics.slice(0, maxShow);
+  const rest = topics.length - shown.length;
+  return (
+    <div className="topic-row">
+      {shown.map((t) => {
+        const on = selectedTopics.includes(t);
+        return (
+          <button
+            key={t}
+            type="button"
+            className={`chip-sm${on ? " on-filter" : ""}`}
+            onClick={() => onToggleTopic?.(t)}
+          >
+            {t}
+          </button>
+        );
+      })}
+      {rest > 0 && (
+        <span
+          className="chip-sm more-topics"
+          title={topics.slice(maxShow).join(", ")}
+        >
+          +{rest}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function LanguagesCell({
+  languages,
+  maxShow,
+  selectedLanguages,
+  onToggleLanguage,
+}: {
+  languages: LanguageShare[];
+  maxShow: number;
+  selectedLanguages: string[];
+  onToggleLanguage?: (lang: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (!languages.length) {
+    return <div className="lang-empty">—</div>;
+  }
+
+  const rest = Math.max(0, languages.length - maxShow);
+  const moreTitle = languages
+    .slice(maxShow)
+    .map((l) => `${l.name} ${formatPct(l.pct)}`)
+    .join(" · ");
+
+  return (
+    <div className={`lang-stack${expanded ? " is-expanded" : ""}`}>
+      <div className="lang-bar" role="img" aria-label="language breakdown">
+        {languages.map((l) => (
+          <span
+            key={l.name}
+            style={{
+              width: `${Math.max(l.pct, 0.4)}%`,
+              background: langColor(l.name),
+            }}
+            title={`${l.name} ${formatPct(l.pct)}`}
+          />
+        ))}
+      </div>
+      <div className="lang-list">
+        {languages.map((l, i) => {
+          const on = selectedLanguages.includes(l.name);
+          const extra = i >= maxShow;
+          return (
+            <button
+              key={l.name}
+              type="button"
+              className={`lang-row${on ? " on-filter" : ""}${extra ? " is-extra" : ""}`}
+              onClick={() => onToggleLanguage?.(l.name)}
+              title={`筛选：${l.name}`}
+            >
+              <span
+                className="lang-dot"
+                style={{ background: langColor(l.name) }}
+              />
+              <span className="lang-name">{l.name}</span>
+              <span className="lang-pct">{formatPct(l.pct)}</span>
+            </button>
+          );
+        })}
+        {rest > 0 && (
+          <button
+            type="button"
+            className="lang-more"
+            aria-expanded={expanded}
+            title={expanded ? "收起语言列表" : moreTitle}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setExpanded((v) => !v);
+            }}
+          >
+            {expanded ? "收起" : `+${rest} more`}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function LeaderboardTable({
   items,
   board,
   metric,
+  density,
+  selectedTopics,
+  selectedLanguages,
+  onToggleTopic,
+  onToggleLanguage,
   onSelectRepo,
 }: Props) {
   if (items.length === 0) {
@@ -77,6 +208,9 @@ export default function LeaderboardTable({
     );
   }
 
+  const maxTopics = density === "compact" ? 2 : 4;
+  const maxLangs = density === "compact" ? 2 : 3;
+
   return (
     <div className="table-wrap">
       <table className="lb">
@@ -84,7 +218,7 @@ export default function LeaderboardTable({
           <tr>
             <th style={{ width: 44 }}>#</th>
             <th>Repo</th>
-            <th style={{ width: 120 }}>Lang</th>
+            <th style={{ width: 200 }}>Languages</th>
             <th className="num" style={{ width: 100 }}>
               {primaryHeader(board, metric)}
             </th>
@@ -97,6 +231,8 @@ export default function LeaderboardTable({
           {items.map((item) => {
             const { owner, name } = splitName(item.full_name);
             const primary = primaryValue(item, board, metric);
+            const topics = item.topics ?? [];
+            const languages = item.languages ?? [];
             return (
               <tr key={item.full_name}>
                 <td className={rankClass(item.rank)}>{item.rank}</td>
@@ -138,8 +274,21 @@ export default function LeaderboardTable({
                       {item.description}
                     </p>
                   )}
+                  <TopicRow
+                    topics={topics}
+                    selectedTopics={selectedTopics}
+                    maxShow={maxTopics}
+                    onToggleTopic={onToggleTopic}
+                  />
                 </td>
-                <td className="lang-cell">{item.language ?? "—"}</td>
+                <td className="lang-cell">
+                  <LanguagesCell
+                    languages={languages}
+                    maxShow={maxLangs}
+                    selectedLanguages={selectedLanguages}
+                    onToggleLanguage={onToggleLanguage}
+                  />
+                </td>
                 <td className="num metric-primary">
                   {board === "trending" ? (
                     <span className="plus">+{compact(primary)}</span>

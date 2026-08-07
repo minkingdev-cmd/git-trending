@@ -1,9 +1,14 @@
-import { useCallback, useEffect, useState } from "react";
-import Controls, { type BoardKind, type Metric } from "./Controls";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Controls from "./Controls";
 import LeaderboardTable from "./LeaderboardTable";
 import RepoHistoryPanel from "./RepoHistoryPanel";
 import { api, UnauthorizedError } from "../api";
-import type { LanguageOption, LeaderboardResponse, MetaResponse } from "../types";
+import type {
+  LanguageFacet,
+  LeaderboardResponse,
+  MetaResponse,
+  TopicFacet,
+} from "../types";
 import {
   applyDensityClasses,
   applyTheme,
@@ -15,6 +20,16 @@ import {
   type Density,
   type Theme,
 } from "../theme";
+import {
+  buildSearch,
+  hasActiveFilters,
+  parseSearch,
+  toggleInList,
+  type BoardKind,
+  type Metric,
+  type TopicMode,
+  type UrlState,
+} from "../urlState";
 
 interface Props {
   username: string;
@@ -24,18 +39,35 @@ interface Props {
   onUnauthorized?: () => void;
 }
 
-function readUrl(): { board: BoardKind; metric: Metric; lang: string; date: string } {
-  const params = new URLSearchParams(window.location.search);
-  const board = params.get("board") === "top" ? "top" : "trending";
-  const metricRaw = params.get("metric");
-  const metric: Metric =
-    metricRaw === "forks" || metricRaw === "watchers" ? metricRaw : "stars";
-  return {
-    board,
-    metric,
-    lang: params.get("lang") ?? "",
-    date: params.get("date") ?? "",
-  };
+function aggregateFacetsFromItems(items: LeaderboardResponse["items"]): {
+  topics: TopicFacet[];
+  languages: LanguageFacet[];
+} {
+  const topicCounts = new Map<string, number>();
+  const langCounts = new Map<string, number>();
+  for (const item of items) {
+    for (const t of item.topics ?? []) {
+      topicCounts.set(t, (topicCounts.get(t) ?? 0) + 1);
+    }
+    const langs = item.languages ?? [];
+    if (langs.length === 0 && item.language) {
+      langCounts.set(item.language, (langCounts.get(item.language) ?? 0) + 1);
+    } else {
+      const seen = new Set<string>();
+      for (const share of langs) {
+        if (seen.has(share.name)) continue;
+        seen.add(share.name);
+        langCounts.set(share.name, (langCounts.get(share.name) ?? 0) + 1);
+      }
+    }
+  }
+  const topics: TopicFacet[] = [...topicCounts.entries()]
+    .map(([topic, count]) => ({ topic, count }))
+    .sort((a, b) => b.count - a.count || a.topic.localeCompare(b.topic));
+  const languages: LanguageFacet[] = [...langCounts.entries()]
+    .map(([language, count]) => ({ language, count }))
+    .sort((a, b) => b.count - a.count || a.language.localeCompare(b.language));
+  return { topics, languages };
 }
 
 export default function Leaderboard({
@@ -45,13 +77,15 @@ export default function Leaderboard({
   onOpenAdmin,
   onUnauthorized,
 }: Props) {
-  const initial = readUrl();
+  const initial = parseSearch(window.location.search);
   const [board, setBoard] = useState<BoardKind>(initial.board);
   const [metric, setMetric] = useState<Metric>(initial.metric);
-  const [lang, setLang] = useState(initial.lang);
   const [date, setDate] = useState(initial.date);
+  const [q, setQ] = useState(initial.q);
+  const [topics, setTopics] = useState<string[]>(initial.topics);
+  const [topicMode, setTopicMode] = useState<TopicMode>(initial.topicMode);
+  const [languages, setLanguages] = useState<string[]>(initial.languages);
   const [dates, setDates] = useState<string[]>([]);
-  const [languages, setLanguages] = useState<LanguageOption[]>([]);
   const [data, setData] = useState<LeaderboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -70,32 +104,19 @@ export default function Leaderboard({
     writeShowDesc(showDesc);
   }, [density, showDesc]);
 
+  // Sync filter state → URL (shareable).
   useEffect(() => {
-    const params = new URLSearchParams();
-    params.set("board", board);
-    if (board === "top") params.set("metric", metric);
-    if (lang) params.set("lang", lang);
-    if (date) params.set("date", date);
-    window.history.replaceState(null, "", `?${params.toString()}`);
-  }, [board, metric, lang, date]);
-
-  // Backend board matching the current view; language counts are scoped per
-  // board so they match what the filtered leaderboard actually returns.
-  const backendBoard = board === "top" ? `top_${metric}` : "trending_daily";
-
-  useEffect(() => {
-    const dateQuery = date ? `&date=${encodeURIComponent(date)}` : "";
-    api<LanguageOption[]>(`/api/languages?board=${backendBoard}${dateQuery}`)
-      .then((ls) => {
-        setLanguages(ls);
-        // Drop the language filter if the selected language has no entries
-        // on the newly selected board/date.
-        setLang((cur) => (cur && !ls.some((l) => l.language === cur) ? "" : cur));
-      })
-      .catch((e) => {
-        if (e instanceof UnauthorizedError) onUnauthorized?.();
-      });
-  }, [backendBoard, date, onUnauthorized]);
+    const state: UrlState = {
+      board,
+      metric,
+      date,
+      q,
+      topics,
+      topicMode,
+      languages,
+    };
+    window.history.replaceState(null, "", buildSearch(state));
+  }, [board, metric, date, q, topics, topicMode, languages]);
 
   useEffect(() => {
     api<MetaResponse>("/api/meta")
@@ -108,12 +129,17 @@ export default function Leaderboard({
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const langQuery = lang ? `&language=${encodeURIComponent(lang)}` : "";
-    const dateQuery = date ? `&date=${encodeURIComponent(date)}` : "";
+    const params = new URLSearchParams();
+    if (date) params.set("date", date);
+    if (q.trim()) params.set("q", q.trim());
+    if (topics.length) params.set("topics", topics.join(","));
+    if (topicMode !== "and") params.set("topic_mode", topicMode);
+    if (languages.length) params.set("languages", languages.join(","));
+    const qs = params.toString();
     const path =
       board === "top"
-        ? `/api/leaderboard/top?metric=${metric}${langQuery}${dateQuery}`
-        : `/api/leaderboard/trending?x=1${langQuery}${dateQuery}`;
+        ? `/api/leaderboard/top?metric=${encodeURIComponent(metric)}${qs ? `&${qs}` : ""}`
+        : `/api/leaderboard/trending${qs ? `?${qs}` : ""}`;
     try {
       setData(await api<LeaderboardResponse>(path));
     } catch (e) {
@@ -125,11 +151,48 @@ export default function Leaderboard({
     } finally {
       setLoading(false);
     }
-  }, [board, metric, lang, date, onUnauthorized]);
+  }, [board, metric, date, q, topics, topicMode, languages, onUnauthorized]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  const { topicFacets, languageFacets } = useMemo(() => {
+    if (!data) return { topicFacets: [] as TopicFacet[], languageFacets: [] as LanguageFacet[] };
+    if (data.topic_facets || data.language_facets) {
+      return {
+        topicFacets: data.topic_facets ?? [],
+        languageFacets: data.language_facets ?? [],
+      };
+    }
+    const agg = aggregateFacetsFromItems(data.items);
+    return { topicFacets: agg.topics, languageFacets: agg.languages };
+  }, [data]);
+
+  const onToggleTopic = useCallback((topic: string) => {
+    setTopics((cur) => toggleInList(cur, topic.toLowerCase()));
+  }, []);
+
+  const onToggleLanguage = useCallback((lang: string) => {
+    setLanguages((cur) => toggleInList(cur, lang));
+  }, []);
+
+  const onClearFilters = useCallback(() => {
+    setQ("");
+    setTopics([]);
+    setLanguages([]);
+  }, []);
+
+  const resultHint = useMemo(() => {
+    if (!data) return null;
+    const n = data.items.length;
+    const boardHint = board === "trending" ? "趋势榜" : `总榜·${metric}`;
+    const langHint = languages.length ? `lang×${languages.length}` : "全部语言";
+    const parts = [`${n} 个结果`, boardHint, langHint];
+    if (topics.length) parts.push(`tag ${topicMode.toUpperCase()}`);
+    if (q.trim()) parts.push(`q`);
+    return parts.join(" · ");
+  }, [data, board, metric, languages, topics, topicMode, q]);
 
   return (
     <div className="page">
@@ -182,19 +245,67 @@ export default function Leaderboard({
         <Controls
           board={board}
           metric={metric}
-          language={lang}
-          languages={languages}
           date={date}
           dates={dates}
+          q={q}
+          topics={topics}
+          topicMode={topicMode}
+          languages={languages}
+          topicFacets={topicFacets}
+          languageFacets={languageFacets}
           density={density}
           showDesc={showDesc}
           onBoard={setBoard}
           onMetric={setMetric}
-          onLanguage={setLang}
           onDate={setDate}
+          onQ={setQ}
+          onToggleTopic={onToggleTopic}
+          onTopicMode={setTopicMode}
+          onToggleLanguage={onToggleLanguage}
+          onClearFilters={onClearFilters}
           onDensity={setDensity}
           onShowDesc={setShowDesc}
         />
+
+        {data && (
+          <div className="result-meta">
+            <div className="active-filters">
+              {q.trim() && <span className="pill-q">q: {q.trim()}</span>}
+              {languages.map((l) => (
+                <button
+                  key={l}
+                  type="button"
+                  className="chip selected-only"
+                  onClick={() => onToggleLanguage(l)}
+                >
+                  {l}
+                  <span className="x">×</span>
+                </button>
+              ))}
+              {topics.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  className="chip selected-only"
+                  onClick={() => onToggleTopic(t)}
+                >
+                  {t}
+                  <span className="x">×</span>
+                </button>
+              ))}
+              {hasActiveFilters({ q, topics, languages }) && (
+                <button
+                  type="button"
+                  className="clear-filters"
+                  onClick={onClearFilters}
+                >
+                  清除
+                </button>
+              )}
+            </div>
+            {resultHint && <div>{resultHint}</div>}
+          </div>
+        )}
 
         {loading && (
           <div className="space-y-2 py-4" aria-busy="true" aria-label="加载中">
@@ -224,6 +335,11 @@ export default function Leaderboard({
             items={data.items}
             board={board}
             metric={metric}
+            density={density}
+            selectedTopics={topics}
+            selectedLanguages={languages}
+            onToggleTopic={onToggleTopic}
+            onToggleLanguage={onToggleLanguage}
             onSelectRepo={setHistoryRepo}
           />
         )}
