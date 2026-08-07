@@ -18,7 +18,7 @@ pub struct TopEntry {
     pub topics: Vec<String>,
 }
 
-/// Repo row that still needs topics and/or language shares filled in.
+/// Repo row that still needs topics, language shares, and/or license filled in.
 #[derive(Debug, Clone)]
 pub struct EnrichmentNeed {
     pub full_name: String,
@@ -29,6 +29,7 @@ pub struct EnrichmentNeed {
     pub description: Option<String>,
     pub needs_topics: bool,
     pub needs_languages: bool,
+    pub needs_license: bool,
 }
 
 pub fn split_full_name(full_name: &str) -> (&str, &str) {
@@ -119,7 +120,7 @@ pub async fn store_trending_rows(pool: &PgPool, date: NaiveDate, rows: &[crate::
     Ok(n)
 }
 
-/// Repos on today's boards missing topics and/or language_names.
+/// Repos on today's boards missing topics, language_names, and/or license.
 pub async fn list_repos_needing_enrichment(
     pool: &PgPool,
     date: NaiveDate,
@@ -133,11 +134,17 @@ pub async fn list_repos_needing_enrichment(
                r.language,
                r.description,
                (cardinality(r.topics) = 0) AS "needs_topics!",
-               (cardinality(r.language_names) = 0) AS "needs_languages!"
+               (cardinality(r.language_names) = 0) AS "needs_languages!",
+               (r.license IS NULL OR btrim(r.license) = '') AS "needs_license!"
            FROM repos r
            JOIN snapshots s ON s.repo_id = r.id
            WHERE s.snapshot_date = $1
-             AND (cardinality(r.topics) = 0 OR cardinality(r.language_names) = 0)
+             AND (
+               cardinality(r.topics) = 0
+               OR cardinality(r.language_names) = 0
+               OR r.license IS NULL
+               OR btrim(r.license) = ''
+             )
            ORDER BY r.full_name"#,
         date
     )
@@ -155,6 +162,7 @@ pub async fn list_repos_needing_enrichment(
             description: r.description,
             needs_topics: r.needs_topics,
             needs_languages: r.needs_languages,
+            needs_license: r.needs_license,
         })
         .collect())
 }
@@ -167,6 +175,7 @@ pub async fn apply_enrichment(
     topics: Vec<String>,
     language_names: Vec<String>,
     languages_json: serde_json::Value,
+    license: Option<String>,
 ) -> Result<(), sqlx::Error> {
     let repo = RepoInput {
         full_name: need.full_name.clone(),
@@ -175,7 +184,8 @@ pub async fn apply_enrichment(
         html_url: need.html_url.clone(),
         language: need.language.clone(),
         description: need.description.clone(),
-        license: None, // preserve existing via COALESCE on upsert
+        // None preserves existing via COALESCE; Some fills missing / upgrades blank.
+        license,
         topics,
         languages_json,
         language_names,

@@ -19,6 +19,9 @@ struct Cli {
     /// Run a single collection and exit (for CronJob / manual runs)
     #[arg(long)]
     once: bool,
+    /// Fill missing repo.license from GitHub /license API and exit
+    #[arg(long)]
+    backfill_licenses: bool,
 }
 
 fn http_client() -> reqwest::Client {
@@ -46,6 +49,16 @@ async fn main() -> anyhow::Result<()> {
         github_base: "https://github.com".to_string(),
         api_base: "https://api.github.com".to_string(),
     });
+
+    if cli.backfill_licenses {
+        let report = collector.backfill_missing_licenses().await;
+        tracing::info!(
+            ok = report.ok,
+            failed = report.failed,
+            "license backfill finished"
+        );
+        return Ok(());
+    }
 
     if cli.once {
         let report = collector.collect_once().await;

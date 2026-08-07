@@ -54,29 +54,8 @@ struct LicenseJson {
     name: Option<String>,
 }
 
-/// Prefer SPDX id; skip NOASSERTION / Other / empty.
-pub fn license_from_gh(
-    spdx_id: Option<String>,
-    key: Option<String>,
-    name: Option<String>,
-) -> Option<String> {
-    for cand in [spdx_id, key, name] {
-        if let Some(s) = cand {
-            let t = s.trim();
-            if t.is_empty() {
-                continue;
-            }
-            if t.eq_ignore_ascii_case("NOASSERTION")
-                || t.eq_ignore_ascii_case("other")
-                || t.eq_ignore_ascii_case("none")
-            {
-                continue;
-            }
-            return Some(t.to_string());
-        }
-    }
-    None
-}
+/// Prefer SPDX id; map bare Other/NOASSERTION to `"Other"` (not blank).
+pub use ght_core::license::license_from_gh;
 
 pub async fn search_top(
     client: &reqwest::Client,

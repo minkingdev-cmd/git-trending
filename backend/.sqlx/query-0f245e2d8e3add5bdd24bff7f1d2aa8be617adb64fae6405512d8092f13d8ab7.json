@@ -1,0 +1,95 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT ROW_NUMBER() OVER (ORDER BY s.watchers DESC NULLS LAST) AS \"rank!\",\n                  r.full_name AS full_name, r.html_url AS html_url,\n                  r.description AS description, r.language AS language,\n                  r.license AS license,\n                  r.topics AS \"topics!\", r.languages AS \"languages!\",\n                  s.stars AS stars, s.forks AS forks, s.watchers AS watchers, s.stars_today AS stars_today\n           FROM snapshots s JOIN repos r ON r.id = s.repo_id\n           WHERE s.snapshot_date = $1 AND s.board = 'top_watchers'\n             AND ($2::text IS NULL OR r.language = $2)\n             AND (\n               $3::text[] IS NULL\n               OR r.language_names && $3\n               OR r.language = ANY($3)\n             )\n             AND ($4::text[] IS NULL OR r.license = ANY($4))\n             AND (\n               $5::text[] IS NULL\n               OR ($6 = 'and' AND r.topics @> $5)\n               OR ($6 = 'or' AND r.topics && $5)\n             )\n             AND (\n               $7::text IS NULL\n               OR r.full_name ILIKE '%' || $7 || '%'\n               OR COALESCE(r.description, '') ILIKE '%' || $7 || '%'\n               OR COALESCE(r.license, '') ILIKE '%' || $7 || '%'\n               OR EXISTS (\n                 SELECT 1 FROM unnest(r.topics) AS t(topic)\n                 WHERE t.topic ILIKE '%' || $7 || '%'\n               )\n               OR EXISTS (\n                 SELECT 1 FROM unnest(r.language_names) AS ln(name)\n                 WHERE ln.name ILIKE '%' || $7 || '%'\n               )\n             )\n           ORDER BY s.watchers DESC NULLS LAST\n           LIMIT $8",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "rank!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "full_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "html_url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "language",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "license",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "topics!",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 7,
+        "name": "languages!",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 8,
+        "name": "stars",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 9,
+        "name": "forks",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 10,
+        "name": "watchers",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 11,
+        "name": "stars_today",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Date",
+        "Text",
+        "TextArray",
+        "TextArray",
+        "TextArray",
+        "Text",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "0f245e2d8e3add5bdd24bff7f1d2aa8be617adb64fae6405512d8092f13d8ab7"
+}

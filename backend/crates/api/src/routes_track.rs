@@ -313,22 +313,7 @@ async fn fetch_github_repo(
     };
 
     let license = meta.license.and_then(|l| {
-        for cand in [l.spdx_id, l.key, l.name] {
-            if let Some(s) = cand {
-                let t = s.trim();
-                if t.is_empty() {
-                    continue;
-                }
-                if t.eq_ignore_ascii_case("NOASSERTION")
-                    || t.eq_ignore_ascii_case("other")
-                    || t.eq_ignore_ascii_case("none")
-                {
-                    continue;
-                }
-                return Some(t.to_string());
-            }
-        }
-        None
+        ght_core::license::license_from_gh(l.spdx_id, l.key, l.name)
     });
 
     Ok(GhRepo {

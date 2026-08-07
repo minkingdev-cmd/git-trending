@@ -147,7 +147,7 @@ pub async fn fetch_repo_details(
     };
     let license = meta
         .license
-        .and_then(|l| crate::search::license_from_gh(l.spdx_id, l.key, l.name));
+        .and_then(|l| ght_core::license::license_from_gh(l.spdx_id, l.key, l.name));
     Ok(RepoDetails {
         full_name,
         owner: owner_login,
@@ -161,6 +161,98 @@ pub async fn fetch_repo_details(
         forks: meta.forks_count,
         watchers: meta.subscribers_count,
     })
+}
+
+/// GET `{base}/repos/{owner}/{name}/license` → refined SPDX / Other / None.
+///
+/// Uses LICENSE body (SPDX header / common phrases) when GitHub only returns Other.
+pub async fn fetch_repo_license(
+    client: &reqwest::Client,
+    base: &str,
+    token: Option<&str>,
+    owner: &str,
+    name: &str,
+) -> anyhow::Result<Option<String>> {
+    let url = format!("{base}/repos/{owner}/{name}/license");
+    let mut req = client
+        .get(&url)
+        .header("Accept", "application/vnd.github+json");
+    if let Some(t) = token {
+        req = req.bearer_auth(t);
+    }
+    let resp = req.send().await?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let body: LicenseFileJson = resp.error_for_status()?.json().await?;
+    let (spdx, key, lname) = match body.license {
+        Some(l) => (l.spdx_id, l.key, l.name),
+        None => (None, None, None),
+    };
+    let content = decode_github_base64(body.content.as_deref());
+    Ok(ght_core::license::resolve_license(
+        spdx,
+        key,
+        lname,
+        content.as_deref(),
+    ))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct LicenseFileJson {
+    license: Option<LicenseJson>,
+    /// Base64-encoded file body (GitHub may insert newlines).
+    content: Option<String>,
+}
+
+/// Decode GitHub's base64 `content` field (standard alphabet, optional newlines).
+fn decode_github_base64(content: Option<&str>) -> Option<String> {
+    let raw: String = content?.chars().filter(|c| !c.is_whitespace()).collect();
+    if raw.is_empty() {
+        return None;
+    }
+    let bytes = b64_std_decode(&raw)?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn b64_val(b: u8) -> Option<u8> {
+    match b {
+        b'A'..=b'Z' => Some(b - b'A'),
+        b'a'..=b'z' => Some(b - b'a' + 26),
+        b'0'..=b'9' => Some(b - b'0' + 52),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    }
+}
+
+fn b64_std_decode(input: &str) -> Option<Vec<u8>> {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len() * 3 / 4 + 2);
+    let mut buf = [0u8; 4];
+    let mut n = 0;
+    for &b in bytes {
+        if b == b'=' {
+            break;
+        }
+        buf[n] = b64_val(b)?;
+        n += 1;
+        if n == 4 {
+            out.push((buf[0] << 2) | (buf[1] >> 4));
+            out.push((buf[1] << 4) | (buf[2] >> 2));
+            out.push((buf[2] << 6) | buf[3]);
+            n = 0;
+        }
+    }
+    if n == 2 {
+        out.push((buf[0] << 2) | (buf[1] >> 4));
+    } else if n == 3 {
+        out.push((buf[0] << 2) | (buf[1] >> 4));
+        out.push((buf[1] << 4) | (buf[2] >> 2));
+    } else if n == 1 {
+        return None;
+    }
+    Some(out)
 }
 
 /// GET `{base}/repos/{owner}/{name}` → normalized topics (for trending-only / missing topics).
@@ -284,6 +376,41 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(topics, vec!["ai".to_string(), "llm".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn fetch_repo_license_refines_other_via_spdx_header() {
+        let server = MockServer::start().await;
+        // Base64 of: "SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note\n"
+        let content = "U1BEWC1MaWNlbnNlLUlkZW50aWZpZXI6IEdQTC0yLjAgV0lUSCBMaW51eC1zeXNjYWxsLW5vdGUK";
+        Mock::given(method("GET"))
+            .and(path("/repos/torvalds/linux/license"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+                r#"{{"license":{{"key":"other","name":"Other","spdx_id":"NOASSERTION"}},"content":"{content}","encoding":"base64"}}"#
+            )))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = reqwest::Client::new();
+        let lic = fetch_repo_license(&client, &server.uri(), None, "torvalds", "linux")
+            .await
+            .unwrap();
+        assert_eq!(lic.as_deref(), Some("GPL-2.0"));
+    }
+
+    #[tokio::test]
+    async fn fetch_repo_license_404_is_none() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/n/license"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        let client = reqwest::Client::new();
+        let lic = fetch_repo_license(&client, &server.uri(), None, "o", "n")
+            .await
+            .unwrap();
+        assert_eq!(lic, None);
     }
 
     #[tokio::test]

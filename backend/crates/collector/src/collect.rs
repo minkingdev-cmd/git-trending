@@ -182,6 +182,85 @@ impl Collector {
         report
     }
 
+    /// Fill missing `repos.license` for all rows with null/blank license (not date-scoped).
+    /// Uses `/repos/{owner}/{name}/license` + content refinement. Failures are logged only.
+    pub async fn backfill_missing_licenses(&self) -> Report {
+        let mut report = Report::default();
+        let rows = match sqlx::query!(
+            r#"SELECT full_name AS "full_name!", owner AS "owner!", name AS "name!"
+               FROM repos
+               WHERE license IS NULL OR btrim(license) = ''
+               ORDER BY full_name"#
+        )
+        .fetch_all(&self.pool)
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!(error = %e, "list repos missing license failed");
+                report.failed += 1;
+                return report;
+            }
+        };
+        if rows.is_empty() {
+            tracing::info!("no repos missing license");
+            return report;
+        }
+        tracing::info!(count = rows.len(), "backfilling missing licenses");
+        let token = self.settings.github_token.as_deref();
+
+        for row in rows {
+            match enrich::fetch_repo_license(
+                &self.http,
+                &self.api_base,
+                token,
+                &row.owner,
+                &row.name,
+            )
+            .await
+            {
+                Ok(Some(lic)) => {
+                    // Only touch license — full upsert would wipe language/description.
+                    match sqlx::query!(
+                        r#"UPDATE repos
+                           SET license = $2
+                           WHERE full_name = $1
+                             AND (license IS NULL OR btrim(license) = '')"#,
+                        row.full_name,
+                        lic
+                    )
+                    .execute(&self.pool)
+                    .await
+                    {
+                        Ok(_) => report.ok += 1,
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                repo = %row.full_name,
+                                "license backfill update failed"
+                            );
+                            report.failed += 1;
+                        }
+                    }
+                }
+                Ok(None) => {
+                    // Confirmed no license on GitHub — leave null.
+                    report.ok += 1;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        repo = %row.full_name,
+                        "license backfill fetch failed"
+                    );
+                    report.failed += 1;
+                }
+            }
+            tokio::time::sleep(ENRICH_INTERVAL).await;
+        }
+        report
+    }
+
     /// Batch-fill missing topics / language shares for repos on today's snapshots.
     /// Search-path topics are already written at store time; this covers languages and
     /// trending-only (empty topics) repos. Enrichment errors are logged only.
@@ -196,13 +275,14 @@ impl Collector {
         if needs.is_empty() {
             return;
         }
-        tracing::info!(count = needs.len(), "enriching repos topics/languages");
+        tracing::info!(count = needs.len(), "enriching repos topics/languages/license");
         let token = self.settings.github_token.as_deref();
 
         for need in needs {
             let mut topics = Vec::new();
             let mut language_names = Vec::new();
             let mut languages_json = ght_core::models::RepoInput::languages_empty();
+            let mut license: Option<String> = None;
             let mut any_ok = false;
 
             if need.needs_languages {
@@ -256,6 +336,34 @@ impl Collector {
                 tokio::time::sleep(ENRICH_INTERVAL).await;
             }
 
+            if need.needs_license {
+                match enrich::fetch_repo_license(
+                    &self.http,
+                    &self.api_base,
+                    token,
+                    &need.owner,
+                    &need.name,
+                )
+                .await
+                {
+                    Ok(Some(lic)) => {
+                        license = Some(lic);
+                        any_ok = true;
+                    }
+                    Ok(None) => {
+                        // Confirmed no license file on GitHub — leave null.
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            repo = %need.full_name,
+                            "fetch license failed; continuing"
+                        );
+                    }
+                }
+                tokio::time::sleep(ENRICH_INTERVAL).await;
+            }
+
             if !any_ok {
                 continue;
             }
@@ -267,6 +375,7 @@ impl Collector {
                 topics,
                 language_names,
                 languages_json,
+                license,
             )
             .await
             {
@@ -640,6 +749,7 @@ mod tests {
             description: entry.description.clone(),
             needs_topics: false,
             needs_languages: true,
+            needs_license: false,
         };
         apply_enrichment(
             &pool,
@@ -648,6 +758,7 @@ mod tests {
             vec![],
             vec!["Rust".into()],
             serde_json::json!([{"name":"Rust","pct":100.0,"bytes":10}]),
+            None,
         )
         .await
         .unwrap();

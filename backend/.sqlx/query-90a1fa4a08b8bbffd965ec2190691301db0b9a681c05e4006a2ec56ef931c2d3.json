@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT full_name AS \"full_name!\", owner AS \"owner!\", name AS \"name!\"\n               FROM repos\n               WHERE license IS NULL OR btrim(license) = ''\n               ORDER BY full_name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "full_name!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "owner!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "name!",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "90a1fa4a08b8bbffd965ec2190691301db0b9a681c05e4006a2ec56ef931c2d3"
+}
