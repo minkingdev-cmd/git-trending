@@ -54,7 +54,7 @@ struct LicenseJson {
     name: Option<String>,
 }
 
-/// Prefer SPDX id; skip NOASSERTION / empty.
+/// Prefer SPDX id; skip NOASSERTION / Other / empty.
 pub fn license_from_gh(
     spdx_id: Option<String>,
     key: Option<String>,
@@ -63,9 +63,16 @@ pub fn license_from_gh(
     for cand in [spdx_id, key, name] {
         if let Some(s) = cand {
             let t = s.trim();
-            if !t.is_empty() && !t.eq_ignore_ascii_case("NOASSERTION") && t != "other" {
-                return Some(t.to_string());
+            if t.is_empty() {
+                continue;
             }
+            if t.eq_ignore_ascii_case("NOASSERTION")
+                || t.eq_ignore_ascii_case("other")
+                || t.eq_ignore_ascii_case("none")
+            {
+                continue;
+            }
+            return Some(t.to_string());
         }
     }
     None

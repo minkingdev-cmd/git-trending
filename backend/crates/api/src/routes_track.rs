@@ -315,9 +315,16 @@ async fn fetch_github_repo(
         for cand in [l.spdx_id, l.key, l.name] {
             if let Some(s) = cand {
                 let t = s.trim();
-                if !t.is_empty() && !t.eq_ignore_ascii_case("NOASSERTION") && t != "other" {
-                    return Some(t.to_string());
+                if t.is_empty() {
+                    continue;
                 }
+                if t.eq_ignore_ascii_case("NOASSERTION")
+                    || t.eq_ignore_ascii_case("other")
+                    || t.eq_ignore_ascii_case("none")
+                {
+                    continue;
+                }
+                return Some(t.to_string());
             }
         }
         None
