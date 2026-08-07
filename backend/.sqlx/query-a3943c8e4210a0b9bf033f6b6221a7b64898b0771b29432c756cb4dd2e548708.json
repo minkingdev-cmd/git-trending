@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT\n               r.full_name AS \"full_name!\",\n               r.owner AS \"owner!\",\n               r.name AS \"name!\",\n               r.html_url AS \"html_url!\",\n               r.language,\n               r.description,\n               (cardinality(r.topics) = 0) AS \"needs_topics!\",\n               (cardinality(r.language_names) = 0) AS \"needs_languages!\"\n           FROM repos r\n           JOIN snapshots s ON s.repo_id = r.id\n           WHERE s.snapshot_date = $1\n             AND (cardinality(r.topics) = 0 OR cardinality(r.language_names) = 0)\n           ORDER BY r.full_name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "full_name!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "owner!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "name!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "html_url!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "language",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "needs_topics!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "needs_languages!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Date"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      null,
+      null
+    ]
+  },
+  "hash": "a3943c8e4210a0b9bf033f6b6221a7b64898b0771b29432c756cb4dd2e548708"
+}

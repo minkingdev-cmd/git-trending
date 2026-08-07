@@ -23,6 +23,8 @@ pub struct SearchRepo {
     pub language: Option<String>,
     pub stars: i32,
     pub forks: i32,
+    /// Raw topics from Search API (normalized at store/enrich time).
+    pub topics: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -38,6 +40,8 @@ struct SearchItem {
     language: Option<String>,
     stargazers_count: i32,
     forks_count: i32,
+    #[serde(default)]
+    topics: Vec<String>,
 }
 
 pub async fn search_top(
@@ -80,6 +84,7 @@ pub async fn search_top(
             language: it.language,
             stars: it.stargazers_count,
             forks: it.forks_count,
+            topics: it.topics,
         }));
     }
     Ok(out)
@@ -95,7 +100,7 @@ mod tests {
         let items: Vec<String> = names
             .iter()
             .map(|n| format!(
-                r#"{{"full_name":"{n}","html_url":"https://github.com/{n}","description":"d","language":"Python","stargazers_count":100,"forks_count":10}}"#
+                r#"{{"full_name":"{n}","html_url":"https://github.com/{n}","description":"d","language":"Python","stargazers_count":100,"forks_count":10,"topics":["AI","llm"]}}"#
             ))
             .collect();
         format!(r#"{{"total_count":{},"items":[{}]}}"#, names.len(), items.join(","))
@@ -124,6 +129,7 @@ mod tests {
         assert_eq!(repos[0].full_name, "a/x");
         assert_eq!(repos[0].stars, 100);
         assert_eq!(repos[0].forks, 10);
+        assert_eq!(repos[0].topics, vec!["AI".to_string(), "llm".to_string()]);
     }
 
     #[tokio::test]

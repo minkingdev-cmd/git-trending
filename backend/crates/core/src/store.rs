@@ -19,6 +19,9 @@ fn filter_q<'a>(f: &LeaderboardFilter<'a>) -> Option<&'a str> {
 }
 
 pub async fn upsert_repo(pool: &PgPool, r: &RepoInput, today: NaiveDate) -> Result<i64, sqlx::Error> {
+    // Empty topics / languages / language_names do NOT wipe existing enrichment
+    // (collector may upsert board rows without re-fetching enrichment every time).
+    // Non-empty values overwrite so a successful enrich refresh wins.
     sqlx::query_scalar!(
         r#"INSERT INTO repos (
                full_name, owner, name, html_url, language, description, first_seen,
@@ -37,10 +40,24 @@ pub async fn upsert_repo(pool: &PgPool, r: &RepoInput, today: NaiveDate) -> Resu
            SET html_url = EXCLUDED.html_url,
                language = EXCLUDED.language,
                description = EXCLUDED.description,
-               topics = EXCLUDED.topics,
-               languages = EXCLUDED.languages,
-               language_names = EXCLUDED.language_names,
-               last_enriched_at = COALESCE(EXCLUDED.last_enriched_at, repos.last_enriched_at)
+               topics = CASE
+                 WHEN cardinality(EXCLUDED.topics) > 0 THEN EXCLUDED.topics
+                 ELSE repos.topics
+               END,
+               languages = CASE
+                 WHEN EXCLUDED.languages <> '[]'::jsonb THEN EXCLUDED.languages
+                 ELSE repos.languages
+               END,
+               language_names = CASE
+                 WHEN cardinality(EXCLUDED.language_names) > 0 THEN EXCLUDED.language_names
+                 ELSE repos.language_names
+               END,
+               last_enriched_at = CASE
+                 WHEN cardinality(EXCLUDED.topics) > 0
+                   OR cardinality(EXCLUDED.language_names) > 0
+                 THEN now()
+                 ELSE repos.last_enriched_at
+               END
            RETURNING id"#,
         r.full_name,
         r.owner,
@@ -503,6 +520,36 @@ mod tests {
             vec!["Rust".to_string(), "Python".to_string()]
         );
         assert!(row.languages.is_array());
+        assert!(row.last_enriched_at.is_some());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn upsert_repo_empty_enrichment_preserves_existing() {
+        let pool = test_pool().await;
+        let date = NaiveDate::from_ymd_opt(2026, 8, 6).unwrap();
+        let mut r = repo("enrich/preserve", Some("Rust"));
+        r.topics = vec!["ai".into()];
+        r.language_names = vec!["Rust".into()];
+        r.languages_json = serde_json::json!([{"name": "Rust", "pct": 100.0, "bytes": 10}]);
+        let id = upsert_repo(&pool, &r, date).await.unwrap();
+
+        // Board re-upsert with empty enrichment must not wipe.
+        let bare = repo("enrich/preserve", Some("Go"));
+        upsert_repo(&pool, &bare, date).await.unwrap();
+        let row = sqlx::query!(
+            r#"SELECT language, topics AS "topics!", language_names AS "language_names!",
+                      languages AS "languages!", last_enriched_at
+               FROM repos WHERE id = $1"#,
+            id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.language.as_deref(), Some("Go"));
+        assert_eq!(row.topics, vec!["ai".to_string()]);
+        assert_eq!(row.language_names, vec!["Rust".to_string()]);
+        assert!(row.languages.as_array().map(|a| !a.is_empty()).unwrap_or(false));
         assert!(row.last_enriched_at.is_some());
     }
 

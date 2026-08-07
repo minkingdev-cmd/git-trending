@@ -3,6 +3,8 @@ use ght_core::models::{Board, RepoInput, SnapshotInput};
 use ght_core::store as core_store;
 use sqlx::PgPool;
 
+use crate::enrich;
+
 #[derive(Debug, Clone)]
 pub struct TopEntry {
     pub repo_full_name: String,
@@ -12,6 +14,20 @@ pub struct TopEntry {
     pub stars: i32,
     pub forks: i32,
     pub watchers: Option<i32>,
+    pub topics: Vec<String>,
+}
+
+/// Repo row that still needs topics and/or language shares filled in.
+#[derive(Debug, Clone)]
+pub struct EnrichmentNeed {
+    pub full_name: String,
+    pub owner: String,
+    pub name: String,
+    pub html_url: String,
+    pub language: Option<String>,
+    pub description: Option<String>,
+    pub needs_topics: bool,
+    pub needs_languages: bool,
 }
 
 pub fn split_full_name(full_name: &str) -> (&str, &str) {
@@ -26,6 +42,7 @@ async fn store_one(
     html_url: &str,
     description: &Option<String>,
     language: &Option<String>,
+    topics: &[String],
     snap: SnapshotInput,
 ) -> anyhow::Result<()> {
     let (owner, name) = split_full_name(full_name);
@@ -36,7 +53,8 @@ async fn store_one(
         html_url: html_url.to_string(),
         language: language.clone(),
         description: description.clone(),
-        topics: vec![],
+        // Empty languages here: core upsert preserves existing; enrich phase fills later.
+        topics: enrich::normalize_topics(topics),
         languages_json: RepoInput::languages_empty(),
         language_names: vec![],
     };
@@ -56,7 +74,13 @@ pub async fn store_top_rows(pool: &PgPool, date: NaiveDate, board: Board, rows: 
             &r.html_url,
             &r.description,
             &r.language,
-            SnapshotInput { stars: r.stars, forks: r.forks, watchers: r.watchers, stars_today: None },
+            &r.topics,
+            SnapshotInput {
+                stars: r.stars,
+                forks: r.forks,
+                watchers: r.watchers,
+                stars_today: None,
+            },
         )
         .await?;
         n += 1;
@@ -75,12 +99,82 @@ pub async fn store_trending_rows(pool: &PgPool, date: NaiveDate, rows: &[crate::
             &format!("https://github.com/{}", t.full_name),
             &t.description,
             &t.language,
-            SnapshotInput { stars: t.stars, forks: t.forks, watchers: None, stars_today: Some(t.stars_today) },
+            &[],
+            SnapshotInput {
+                stars: t.stars,
+                forks: t.forks,
+                watchers: None,
+                stars_today: Some(t.stars_today),
+            },
         )
         .await?;
         n += 1;
     }
     Ok(n)
+}
+
+/// Repos on today's boards missing topics and/or language_names.
+pub async fn list_repos_needing_enrichment(
+    pool: &PgPool,
+    date: NaiveDate,
+) -> Result<Vec<EnrichmentNeed>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"SELECT DISTINCT
+               r.full_name AS "full_name!",
+               r.owner AS "owner!",
+               r.name AS "name!",
+               r.html_url AS "html_url!",
+               r.language,
+               r.description,
+               (cardinality(r.topics) = 0) AS "needs_topics!",
+               (cardinality(r.language_names) = 0) AS "needs_languages!"
+           FROM repos r
+           JOIN snapshots s ON s.repo_id = r.id
+           WHERE s.snapshot_date = $1
+             AND (cardinality(r.topics) = 0 OR cardinality(r.language_names) = 0)
+           ORDER BY r.full_name"#,
+        date
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| EnrichmentNeed {
+            full_name: r.full_name,
+            owner: r.owner,
+            name: r.name,
+            html_url: r.html_url,
+            language: r.language,
+            description: r.description,
+            needs_topics: r.needs_topics,
+            needs_languages: r.needs_languages,
+        })
+        .collect())
+}
+
+/// Write enrichment fields for an existing repo (empty fields preserve prior values via upsert).
+pub async fn apply_enrichment(
+    pool: &PgPool,
+    date: NaiveDate,
+    need: &EnrichmentNeed,
+    topics: Vec<String>,
+    language_names: Vec<String>,
+    languages_json: serde_json::Value,
+) -> Result<(), sqlx::Error> {
+    let repo = RepoInput {
+        full_name: need.full_name.clone(),
+        owner: need.owner.clone(),
+        name: need.name.clone(),
+        html_url: need.html_url.clone(),
+        language: need.language.clone(),
+        description: need.description.clone(),
+        topics,
+        languages_json,
+        language_names,
+    };
+    core_store::upsert_repo(pool, &repo, date).await?;
+    Ok(())
 }
 
 #[cfg(test)]

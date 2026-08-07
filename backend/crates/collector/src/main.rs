@@ -1,4 +1,5 @@
 mod collect;
+mod enrich;
 mod graphql;
 mod search;
 mod store;

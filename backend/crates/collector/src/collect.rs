@@ -1,6 +1,10 @@
+use crate::enrich::{self, ENRICH_INTERVAL};
 use crate::graphql::{fetch_watchers, WatchTarget};
 use crate::search::{search_top, Metric};
-use crate::store::{split_full_name, store_top_rows, store_trending_rows, TopEntry};
+use crate::store::{
+    apply_enrichment, list_repos_needing_enrichment, split_full_name, store_top_rows,
+    store_trending_rows, TopEntry,
+};
 use crate::trending::fetch_trending;
 use chrono::Utc;
 use ght_core::config::Settings;
@@ -64,6 +68,7 @@ impl Collector {
                                 stars: r.stars,
                                 forks: r.forks,
                                 watchers: None,
+                                topics: r.topics,
                             })
                             .collect();
                         match store_top_rows(&self.pool, today, board, &entries).await {
@@ -113,6 +118,7 @@ impl Collector {
                                                 stars: c.stars,
                                                 forks: c.forks,
                                                 watchers: Some(w),
+                                                topics: c.topics,
                                             })
                                         })
                                         .collect();
@@ -160,12 +166,112 @@ impl Collector {
             tokio::time::sleep(TRENDING_INTERVAL).await;
         }
 
-        // 4. 清理过期 refresh token
+        // 4. Enrich topics/languages for today's board repos (failures do not fail the board).
+        self.enrich_today_repos(today).await;
+
+        // 5. 清理过期 refresh token
         if let Err(e) = core_store::cleanup_expired_refresh_tokens(&self.pool).await {
             tracing::warn!(error = %e, "refresh token cleanup failed");
         }
 
         report
+    }
+
+    /// Batch-fill missing topics / language shares for repos on today's snapshots.
+    /// Search-path topics are already written at store time; this covers languages and
+    /// trending-only (empty topics) repos. Enrichment errors are logged only.
+    async fn enrich_today_repos(&self, today: chrono::NaiveDate) {
+        let needs = match list_repos_needing_enrichment(&self.pool, today).await {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::warn!(error = %e, "list repos needing enrichment failed");
+                return;
+            }
+        };
+        if needs.is_empty() {
+            return;
+        }
+        tracing::info!(count = needs.len(), "enriching repos topics/languages");
+        let token = self.settings.github_token.as_deref();
+
+        for need in needs {
+            let mut topics = Vec::new();
+            let mut language_names = Vec::new();
+            let mut languages_json = ght_core::models::RepoInput::languages_empty();
+            let mut any_ok = false;
+
+            if need.needs_languages {
+                match enrich::fetch_languages(
+                    &self.http,
+                    &self.api_base,
+                    token,
+                    &need.owner,
+                    &need.name,
+                )
+                .await
+                {
+                    Ok((shares, names)) => {
+                        languages_json = enrich::languages_json(&shares);
+                        language_names = names;
+                        any_ok = true;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            repo = %need.full_name,
+                            "fetch languages failed; continuing"
+                        );
+                    }
+                }
+                tokio::time::sleep(ENRICH_INTERVAL).await;
+            }
+
+            if need.needs_topics {
+                match enrich::fetch_repo_topics(
+                    &self.http,
+                    &self.api_base,
+                    token,
+                    &need.owner,
+                    &need.name,
+                )
+                .await
+                {
+                    Ok(t) => {
+                        topics = t;
+                        any_ok = true;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            repo = %need.full_name,
+                            "fetch topics failed; continuing"
+                        );
+                    }
+                }
+                tokio::time::sleep(ENRICH_INTERVAL).await;
+            }
+
+            if !any_ok {
+                continue;
+            }
+
+            if let Err(e) = apply_enrichment(
+                &self.pool,
+                today,
+                &need,
+                topics,
+                language_names,
+                languages_json,
+            )
+            .await
+            {
+                tracing::warn!(
+                    error = %e,
+                    repo = %need.full_name,
+                    "apply enrichment failed; continuing"
+                );
+            }
+        }
     }
 }
 
@@ -198,7 +304,7 @@ mod tests {
         let items: Vec<String> = names
             .iter()
             .map(|n| format!(
-                r#"{{"full_name":"{n}","html_url":"https://github.com/{n}","description":null,"language":"Python","stargazers_count":{stars},"forks_count":3}}"#
+                r#"{{"full_name":"{n}","html_url":"https://github.com/{n}","description":null,"language":"Python","stargazers_count":{stars},"forks_count":3,"topics":["AI","llm"]}}"#
             ))
             .collect();
         format!(r#"{{"total_count":{},"items":[{}]}}"#, names.len(), items.join(","))
@@ -218,6 +324,22 @@ mod tests {
         Mock::given(method("GET"))
             .and(path_regex("/trending.*"))
             .respond_with(ResponseTemplate::new(200).set_body_string(trending_body()))
+            .mount(server)
+            .await;
+        // Enrichment: languages + repo meta for topics (trending-only / missing).
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/repos/.+/languages$"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(r#"{"Rust":900,"Python":100}"#),
+            )
+            .mount(server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/repos/[^/]+/[^/]+$"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"topics":["trending","demo"]}"#),
+            )
             .mount(server)
             .await;
     }
@@ -287,6 +409,23 @@ mod tests {
             core_store::board_count(&pool, today, Board::TrendingDaily).await.unwrap(),
             3
         );
+
+        // Enrichment: search topics normalized; languages filled for board repos.
+        let top = sqlx::query!(
+            r#"SELECT topics AS "topics!", language_names AS "language_names!",
+                      languages AS "languages!", last_enriched_at
+               FROM repos WHERE full_name = 'a/top'"#
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(top.topics, vec!["ai".to_string(), "llm".to_string()]);
+        assert_eq!(
+            top.language_names,
+            vec!["Rust".to_string(), "Python".to_string()]
+        );
+        assert!(top.languages.is_array());
+        assert!(top.last_enriched_at.is_some());
     }
 
     #[tokio::test]
@@ -302,5 +441,111 @@ mod tests {
         let empty = ght_core::models::LeaderboardFilter::empty();
         assert_eq!(core_store::top_by_watchers(&pool, today, empty, 100).await.unwrap().len(), 0);
         assert_eq!(core_store::top_by_stars(&pool, today, empty, 100).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn enrich_failure_does_not_fail_public_board() {
+        let server = MockServer::start().await;
+        // Boards only — no languages/topics mocks; enrich 404s must not fail collect.
+        Mock::given(method("GET"))
+            .and(path("/search/repositories"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(search_body(&["a/top"], 999)))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data": {"q0": {"watchers": {"totalCount": 77}}}})))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path_regex("/trending.*"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(trending_body()))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/repos/"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let pool = test_pool().await;
+        let collector = test_collector(pool.clone(), server.uri(), Some("t0k3n".into()));
+        let report = collector.collect_once().await;
+        assert_eq!(report.failed, 0, "enrich failure must not count as board failure");
+        let today = Utc::now().date_naive();
+        let empty = ght_core::models::LeaderboardFilter::empty();
+        assert_eq!(core_store::top_by_stars(&pool, today, empty, 100).await.unwrap().len(), 1);
+        // Search topics still written; languages stay empty after failed enrich.
+        let top = sqlx::query!(
+            r#"SELECT topics AS "topics!", language_names AS "language_names!"
+               FROM repos WHERE full_name = 'a/top'"#
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(top.topics, vec!["ai".to_string(), "llm".to_string()]);
+        assert!(top.language_names.is_empty());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn empty_upsert_does_not_wipe_existing_enrichment() {
+        let pool = test_pool().await;
+        let today = Utc::now().date_naive();
+        let entry = TopEntry {
+            repo_full_name: "wipe/test".into(),
+            html_url: "https://github.com/wipe/test".into(),
+            description: Some("d".into()),
+            language: Some("Rust".into()),
+            stars: 1,
+            forks: 0,
+            watchers: None,
+            topics: vec!["ai".into()],
+        };
+        store_top_rows(&pool, today, Board::TopStars, &[entry.clone()])
+            .await
+            .unwrap();
+        // Simulate successful enrich write.
+        let need = crate::store::EnrichmentNeed {
+            full_name: "wipe/test".into(),
+            owner: "wipe".into(),
+            name: "test".into(),
+            html_url: entry.html_url.clone(),
+            language: entry.language.clone(),
+            description: entry.description.clone(),
+            needs_topics: false,
+            needs_languages: true,
+        };
+        apply_enrichment(
+            &pool,
+            today,
+            &need,
+            vec![],
+            vec!["Rust".into()],
+            serde_json::json!([{"name":"Rust","pct":100.0,"bytes":10}]),
+        )
+        .await
+        .unwrap();
+
+        // Second board store with empty topics/languages must preserve enrichment.
+        let again = TopEntry {
+            topics: vec![],
+            stars: 2,
+            ..entry
+        };
+        store_top_rows(&pool, today, Board::TopForks, &[again])
+            .await
+            .unwrap();
+
+        let row = sqlx::query!(
+            r#"SELECT topics AS "topics!", language_names AS "language_names!"
+               FROM repos WHERE full_name = 'wipe/test'"#
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.topics, vec!["ai".to_string()]);
+        assert_eq!(row.language_names, vec!["Rust".to_string()]);
     }
 }
