@@ -261,7 +261,8 @@ impl Collector {
         report
     }
 
-    /// Batch-fill missing topics / language shares for repos on today's snapshots.
+    /// Batch-fill missing topics / language shares for repos on today's snapshots,
+    /// and write health fields from repo details + latest release.
     /// Search-path topics are already written at store time; this covers languages and
     /// trending-only (empty topics) repos. Enrichment errors are logged only.
     async fn enrich_today_repos(&self, today: chrono::NaiveDate) {
@@ -275,7 +276,10 @@ impl Collector {
         if needs.is_empty() {
             return;
         }
-        tracing::info!(count = needs.len(), "enriching repos topics/languages/license");
+        tracing::info!(
+            count = needs.len(),
+            "enriching repos topics/languages/license/health"
+        );
         let token = self.settings.github_token.as_deref();
 
         for need in needs {
@@ -284,6 +288,8 @@ impl Collector {
             let mut languages_json = ght_core::models::RepoInput::languages_empty();
             let mut license: Option<String> = None;
             let mut any_ok = false;
+            // Reused for topics (when needed) and health columns.
+            let mut details: Option<enrich::RepoDetails> = None;
 
             if need.needs_languages {
                 match enrich::fetch_languages(
@@ -312,7 +318,7 @@ impl Collector {
             }
 
             if need.needs_topics {
-                match enrich::fetch_repo_topics(
+                match enrich::fetch_repo_details(
                     &self.http,
                     &self.api_base,
                     token,
@@ -321,15 +327,16 @@ impl Collector {
                 )
                 .await
                 {
-                    Ok(t) => {
-                        topics = t;
+                    Ok(d) => {
+                        topics = d.topics.clone();
+                        details = Some(d);
                         any_ok = true;
                     }
                     Err(e) => {
                         tracing::warn!(
                             error = %e,
                             repo = %need.full_name,
-                            "fetch topics failed; continuing"
+                            "fetch topics/details failed; continuing"
                         );
                     }
                 }
@@ -364,25 +371,124 @@ impl Collector {
                 tokio::time::sleep(ENRICH_INTERVAL).await;
             }
 
-            if !any_ok {
-                continue;
+            let mut repo_id: Option<i64> = None;
+            if any_ok {
+                match apply_enrichment(
+                    &self.pool,
+                    today,
+                    &need,
+                    topics,
+                    language_names,
+                    languages_json,
+                    license,
+                )
+                .await
+                {
+                    Ok(id) => repo_id = Some(id),
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            repo = %need.full_name,
+                            "apply enrichment failed; continuing"
+                        );
+                    }
+                }
             }
 
-            if let Err(e) = apply_enrichment(
-                &self.pool,
-                today,
-                &need,
-                topics,
-                language_names,
-                languages_json,
-                license,
+            // Health: always try details + release for this board repo (best-effort).
+            if details.is_none() {
+                match enrich::fetch_repo_details(
+                    &self.http,
+                    &self.api_base,
+                    token,
+                    &need.owner,
+                    &need.name,
+                )
+                .await
+                {
+                    Ok(d) => details = Some(d),
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            repo = %need.full_name,
+                            "fetch repo details for health failed; continuing"
+                        );
+                    }
+                }
+                tokio::time::sleep(ENRICH_INTERVAL).await;
+            }
+
+            let Some(d) = details else {
+                continue;
+            };
+
+            if repo_id.is_none() {
+                match core_store::repo_id_by_full_name(&self.pool, &need.full_name).await {
+                    Ok(id) => repo_id = id,
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            repo = %need.full_name,
+                            "lookup repo id for health failed; continuing"
+                        );
+                    }
+                }
+            }
+            let Some(repo_id) = repo_id else {
+                continue;
+            };
+
+            let release = match enrich::fetch_latest_release(
+                &self.http,
+                &self.api_base,
+                token,
+                &need.owner,
+                &need.name,
             )
             .await
             {
+                Ok(v) => Ok(v),
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        repo = %need.full_name,
+                        "fetch latest release failed; keeping previous latest_release_at"
+                    );
+                    Err(())
+                }
+            };
+            tokio::time::sleep(ENRICH_INTERVAL).await;
+
+            let health_res = match release {
+                Ok(latest_release_at) => {
+                    core_store::update_repo_health(
+                        &self.pool,
+                        repo_id,
+                        d.pushed_at,
+                        d.archived,
+                        d.open_issues_count,
+                        d.created_at_gh,
+                        latest_release_at,
+                    )
+                    .await
+                }
+                Err(()) => {
+                    core_store::update_repo_health_keep_release(
+                        &self.pool,
+                        repo_id,
+                        d.pushed_at,
+                        d.archived,
+                        d.open_issues_count,
+                        d.created_at_gh,
+                    )
+                    .await
+                }
+            };
+            if let Err(e) = health_res {
                 tracing::warn!(
                     error = %e,
                     repo = %need.full_name,
-                    "apply enrichment failed; continuing"
+                    "update repo health failed; continuing"
                 );
             }
         }
@@ -455,20 +561,44 @@ impl Collector {
             tokio::time::sleep(ENRICH_INTERVAL).await;
 
             let languages_json = enrich::languages_json(&shares);
+
+            // Latest release best-effort: on error, keep previous via keep_release update.
+            let release = match enrich::fetch_latest_release(
+                &self.http,
+                &self.api_base,
+                token,
+                owner,
+                name,
+            )
+            .await
+            {
+                Ok(v) => Ok(v),
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        repo = %full_name,
+                        "fetch tracked latest release failed; keeping previous"
+                    );
+                    Err(())
+                }
+            };
+            tokio::time::sleep(ENRICH_INTERVAL).await;
+
             let repo = RepoInput {
                 full_name: details.full_name.clone(),
-                owner: details.owner,
-                name: details.name,
-                html_url: details.html_url,
+                owner: details.owner.clone(),
+                name: details.name.clone(),
+                html_url: details.html_url.clone(),
                 language: details
                     .language
                     .clone()
                     .or_else(|| language_names.first().cloned()),
-                description: details.description,
-                license: details.license,
-                topics: details.topics,
+                description: details.description.clone(),
+                license: details.license.clone(),
+                topics: details.topics.clone(),
                 languages_json,
                 language_names,
+                // Health written via update_repo_health after upsert (upsert leaves health alone).
                 pushed_at: None,
                 archived: false,
                 open_issues_count: None,
@@ -487,6 +617,39 @@ impl Collector {
                     continue;
                 }
             };
+
+            let health_res = match release {
+                Ok(latest_release_at) => {
+                    core_store::update_repo_health(
+                        &self.pool,
+                        repo_id,
+                        details.pushed_at,
+                        details.archived,
+                        details.open_issues_count,
+                        details.created_at_gh,
+                        latest_release_at,
+                    )
+                    .await
+                }
+                Err(()) => {
+                    core_store::update_repo_health_keep_release(
+                        &self.pool,
+                        repo_id,
+                        details.pushed_at,
+                        details.archived,
+                        details.open_issues_count,
+                        details.created_at_gh,
+                    )
+                    .await
+                }
+            };
+            if let Err(e) = health_res {
+                tracing::warn!(
+                    error = %e,
+                    repo = %full_name,
+                    "update tracked repo health failed; continuing"
+                );
+            }
 
             if let Err(e) = core_store::upsert_indexed_snapshots(
                 &self.pool,
@@ -575,7 +738,14 @@ mod tests {
         Mock::given(method("GET"))
             .and(path_regex(r"^/repos/[^/]+/[^/]+$"))
             .respond_with(ResponseTemplate::new(200).set_body_string(
-                r#"{"full_name":"mock/repo","html_url":"https://github.com/mock/repo","topics":["trending","demo"],"private":false,"stargazers_count":0,"forks_count":0}"#,
+                r#"{"full_name":"mock/repo","html_url":"https://github.com/mock/repo","topics":["trending","demo"],"private":false,"stargazers_count":0,"forks_count":0,"pushed_at":"2024-05-01T00:00:00Z","archived":false,"open_issues_count":1,"created_at":"2020-01-01T00:00:00Z"}"#,
+            ))
+            .mount(server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/repos/.+/releases/latest$"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"tag_name":"v1","published_at":"2024-04-15T12:00:00Z"}"#,
             ))
             .mount(server)
             .await;
@@ -647,10 +817,12 @@ mod tests {
             3
         );
 
-        // Enrichment: search topics normalized; languages filled for board repos.
+        // Enrichment: search topics normalized; languages + health filled for board repos.
         let top = sqlx::query!(
             r#"SELECT topics AS "topics!", language_names AS "language_names!",
-                      languages AS "languages!", last_enriched_at
+                      languages AS "languages!", last_enriched_at,
+                      pushed_at, archived AS "archived!", open_issues_count,
+                      created_at_gh, latest_release_at
                FROM repos WHERE full_name = 'a/top'"#
         )
         .fetch_one(&pool)
@@ -663,6 +835,11 @@ mod tests {
         );
         assert!(top.languages.is_array());
         assert!(top.last_enriched_at.is_some());
+        assert!(top.pushed_at.is_some());
+        assert!(!top.archived);
+        assert_eq!(top.open_issues_count, Some(1));
+        assert!(top.created_at_gh.is_some());
+        assert!(top.latest_release_at.is_some());
     }
 
     #[tokio::test]
@@ -806,7 +983,11 @@ mod tests {
                 "forks_count": 56,
                 "subscribers_count": 78,
                 "owner": {"login": "tracked"},
-                "name": "only"
+                "name": "only",
+                "pushed_at": "2024-07-01T10:00:00Z",
+                "archived": false,
+                "open_issues_count": 9,
+                "created_at": "2019-03-01T00:00:00Z"
             })))
             .expect(1)
             .mount(&server)
@@ -816,6 +997,15 @@ mod tests {
             .respond_with(
                 ResponseTemplate::new(200).set_body_string(r#"{"Rust":900,"TS":100}"#),
             )
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/tracked/only/releases/latest"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "tag_name": "v2.0.0",
+                "published_at": "2024-06-20T08:00:00Z"
+            })))
             .expect(1)
             .mount(&server)
             .await;
@@ -880,9 +1070,11 @@ mod tests {
             assert_eq!(s.watchers, Some(78));
         }
 
-        // Meta + languages refreshed.
+        // Meta + languages + health refreshed.
         let repo = sqlx::query!(
-            r#"SELECT description, topics AS "topics!", language_names AS "language_names!"
+            r#"SELECT description, topics AS "topics!", language_names AS "language_names!",
+                      pushed_at, archived AS "archived!", open_issues_count,
+                      created_at_gh, latest_release_at
                FROM repos WHERE full_name = 'tracked/only'"#
         )
         .fetch_one(&pool)
@@ -894,6 +1086,11 @@ mod tests {
             repo.language_names,
             vec!["Rust".to_string(), "TS".to_string()]
         );
+        assert!(repo.pushed_at.is_some());
+        assert!(!repo.archived);
+        assert_eq!(repo.open_issues_count, Some(9));
+        assert!(repo.created_at_gh.is_some());
+        assert!(repo.latest_release_at.is_some());
 
         // User-tracked repos are first-class on public metric boards.
         assert_eq!(

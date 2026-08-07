@@ -173,6 +173,7 @@ pub async fn list_repos_needing_enrichment(
 }
 
 /// Write enrichment fields for an existing repo (empty fields preserve prior values via upsert).
+/// Returns the repo id.
 pub async fn apply_enrichment(
     pool: &PgPool,
     date: NaiveDate,
@@ -181,7 +182,7 @@ pub async fn apply_enrichment(
     language_names: Vec<String>,
     languages_json: serde_json::Value,
     license: Option<String>,
-) -> Result<(), sqlx::Error> {
+) -> Result<i64, sqlx::Error> {
     let repo = RepoInput {
         full_name: need.full_name.clone(),
         owner: need.owner.clone(),
@@ -200,8 +201,7 @@ pub async fn apply_enrichment(
         created_at_gh: None,
         latest_release_at: None,
     };
-    core_store::upsert_repo(pool, &repo, date).await?;
-    Ok(())
+    core_store::upsert_repo(pool, &repo, date).await
 }
 
 #[cfg(test)]

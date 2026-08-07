@@ -216,6 +216,48 @@ pub async fn update_repo_health(
     Ok(())
 }
 
+/// Like [`update_repo_health`] but leaves `latest_release_at` unchanged.
+///
+/// Use when the release fetch failed transiently so a previous successful value is kept.
+pub async fn update_repo_health_keep_release(
+    pool: &PgPool,
+    repo_id: i64,
+    pushed_at: Option<DateTime<Utc>>,
+    archived: bool,
+    open_issues_count: Option<i32>,
+    created_at_gh: Option<DateTime<Utc>>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"UPDATE repos
+           SET pushed_at = $2,
+               archived = $3,
+               open_issues_count = $4,
+               created_at_gh = $5
+           WHERE id = $1"#,
+        repo_id,
+        pushed_at,
+        archived,
+        open_issues_count,
+        created_at_gh,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Look up `repos.id` by full_name (for health updates after enrich).
+pub async fn repo_id_by_full_name(
+    pool: &PgPool,
+    full_name: &str,
+) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"SELECT id AS "id!" FROM repos WHERE full_name = $1"#,
+        full_name
+    )
+    .fetch_optional(pool)
+    .await
+}
+
 pub async fn top_by_stars(
     pool: &PgPool,
     date: NaiveDate,
@@ -2092,6 +2134,60 @@ mod tests {
         assert_eq!(preserved.language.as_deref(), Some("Rust"));
         assert!(preserved.archived);
         assert_eq!(preserved.open_issues_count, Some(42));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn update_repo_health_keep_release_preserves_latest() {
+        use chrono::{Duration, Utc};
+
+        let pool = test_pool().await;
+        let date = NaiveDate::from_ymd_opt(2099, 3, 4).unwrap();
+        let id = upsert_repo(&pool, &repo("healthk/x", Some("Go")), date)
+            .await
+            .unwrap();
+
+        let now = Utc::now();
+        let release = now - Duration::days(7);
+        update_repo_health(
+            &pool,
+            id,
+            Some(now - Duration::days(30)),
+            false,
+            Some(1),
+            Some(now - Duration::days(500)),
+            Some(release),
+        )
+        .await
+        .unwrap();
+
+        // Transient release failure path: other fields refresh, latest_release_at stays.
+        update_repo_health_keep_release(
+            &pool,
+            id,
+            Some(now - Duration::days(1)),
+            true,
+            Some(99),
+            Some(now - Duration::days(400)),
+        )
+        .await
+        .unwrap();
+
+        let row = sqlx::query!(
+            r#"SELECT pushed_at, archived AS "archived!", open_issues_count,
+                      created_at_gh, latest_release_at
+               FROM repos WHERE id = $1"#,
+            id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(row.archived);
+        assert_eq!(row.open_issues_count, Some(99));
+        assert!(row.pushed_at.is_some());
+        assert!(row.created_at_gh.is_some());
+        let kept = row.latest_release_at.expect("latest_release_at preserved");
+        assert_eq!(kept.timestamp(), release.timestamp());
     }
 
     #[tokio::test]

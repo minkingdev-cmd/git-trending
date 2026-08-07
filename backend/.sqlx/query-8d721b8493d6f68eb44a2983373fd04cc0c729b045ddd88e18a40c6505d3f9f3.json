@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE repos\n           SET pushed_at = $2,\n               archived = $3,\n               open_issues_count = $4,\n               created_at_gh = $5\n           WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Timestamptz",
+        "Bool",
+        "Int4",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8d721b8493d6f68eb44a2983373fd04cc0c729b045ddd88e18a40c6505d3f9f3"
+}

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use ght_core::models::LanguageShare;
 
 /// Minimum delay between per-repo enrich HTTP calls (languages / topics).
@@ -83,6 +84,12 @@ pub struct RepoDetails {
     pub forks: i32,
     /// GitHub REST `subscribers_count` (true watchers).
     pub watchers: Option<i32>,
+    /// Last push time (RFC3339 from GitHub `pushed_at`).
+    pub pushed_at: Option<DateTime<Utc>>,
+    pub archived: bool,
+    pub open_issues_count: Option<i32>,
+    /// Repo creation time on GitHub (`created_at` → `created_at_gh`).
+    pub created_at_gh: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -102,6 +109,16 @@ struct RepoMetaJson {
     subscribers_count: Option<i32>,
     owner: Option<RepoOwnerJson>,
     name: Option<String>,
+    /// RFC3339; missing/null → None.
+    #[serde(default)]
+    pushed_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    archived: bool,
+    #[serde(default)]
+    open_issues_count: Option<i32>,
+    /// GitHub `created_at` → maps to `created_at_gh` in store.
+    #[serde(default)]
+    created_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -160,7 +177,43 @@ pub async fn fetch_repo_details(
         stars: meta.stargazers_count,
         forks: meta.forks_count,
         watchers: meta.subscribers_count,
+        pushed_at: meta.pushed_at,
+        archived: meta.archived,
+        open_issues_count: meta.open_issues_count,
+        created_at_gh: meta.created_at,
     })
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct LatestReleaseJson {
+    published_at: Option<DateTime<Utc>>,
+}
+
+/// GET `{base}/repos/{owner}/{name}/releases/latest`.
+///
+/// - 404 → `Ok(None)` (no releases published)
+/// - 200 → `Ok(Some(published_at))` when present, else `Ok(None)`
+/// - other HTTP / network errors → `Err` (caller must not overwrite stored `latest_release_at`)
+pub async fn fetch_latest_release(
+    client: &reqwest::Client,
+    base: &str,
+    token: Option<&str>,
+    owner: &str,
+    name: &str,
+) -> anyhow::Result<Option<DateTime<Utc>>> {
+    let url = format!("{base}/repos/{owner}/{name}/releases/latest");
+    let mut req = client
+        .get(&url)
+        .header("Accept", "application/vnd.github+json");
+    if let Some(t) = token {
+        req = req.bearer_auth(t);
+    }
+    let resp = req.send().await?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let body: LatestReleaseJson = resp.error_for_status()?.json().await?;
+    Ok(body.published_at)
 }
 
 /// GET `{base}/repos/{owner}/{name}/license` → refined SPDX / Other / None.
@@ -419,7 +472,7 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/repos/o/n"))
             .respond_with(ResponseTemplate::new(200).set_body_string(
-                r#"{"full_name":"o/n","html_url":"https://github.com/o/n","description":"d","language":"Rust","topics":["AI"],"private":false,"stargazers_count":10,"forks_count":2,"subscribers_count":3,"owner":{"login":"o"},"name":"n"}"#,
+                r#"{"full_name":"o/n","html_url":"https://github.com/o/n","description":"d","language":"Rust","topics":["AI"],"private":false,"stargazers_count":10,"forks_count":2,"subscribers_count":3,"owner":{"login":"o"},"name":"n","pushed_at":"2024-06-01T12:00:00Z","archived":false,"open_issues_count":7,"created_at":"2020-01-15T08:30:00Z"}"#,
             ))
             .mount(&server)
             .await;
@@ -431,6 +484,16 @@ mod tests {
         assert_eq!(d.forks, 2);
         assert_eq!(d.watchers, Some(3));
         assert_eq!(d.topics, vec!["ai".to_string()]);
+        assert_eq!(d.open_issues_count, Some(7));
+        assert!(!d.archived);
+        assert_eq!(
+            d.pushed_at.map(|t| t.to_rfc3339()),
+            Some("2024-06-01T12:00:00+00:00".into())
+        );
+        assert_eq!(
+            d.created_at_gh.map(|t| t.to_rfc3339()),
+            Some("2020-01-15T08:30:00+00:00".into())
+        );
 
         let server2 = MockServer::start().await;
         Mock::given(method("GET"))
@@ -442,6 +505,80 @@ mod tests {
             .await;
         assert!(
             fetch_repo_details(&client, &server2.uri(), None, "o", "priv")
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_repo_details_health_defaults_when_absent() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/n"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"full_name":"o/n","html_url":"https://github.com/o/n","private":false,"stargazers_count":1,"forks_count":0}"#,
+            ))
+            .mount(&server)
+            .await;
+        let client = reqwest::Client::new();
+        let d = fetch_repo_details(&client, &server.uri(), None, "o", "n")
+            .await
+            .unwrap();
+        assert!(d.pushed_at.is_none());
+        assert!(!d.archived);
+        assert!(d.open_issues_count.is_none());
+        assert!(d.created_at_gh.is_none());
+    }
+
+    #[tokio::test]
+    async fn fetch_latest_release_200_parses_published_at() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/n/releases/latest"))
+            .and(header("accept", "application/vnd.github+json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"tag_name":"v1.0.0","published_at":"2024-03-10T15:45:00Z"}"#,
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = reqwest::Client::new();
+        let at = fetch_latest_release(&client, &server.uri(), Some("tok"), "o", "n")
+            .await
+            .unwrap();
+        assert_eq!(
+            at.map(|t| t.to_rfc3339()),
+            Some("2024-03-10T15:45:00+00:00".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_latest_release_404_is_none() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/n/releases/latest"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = reqwest::Client::new();
+        let at = fetch_latest_release(&client, &server.uri(), None, "o", "n")
+            .await
+            .unwrap();
+        assert_eq!(at, None);
+    }
+
+    #[tokio::test]
+    async fn fetch_latest_release_500_is_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/n/releases/latest"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        let client = reqwest::Client::new();
+        assert!(
+            fetch_latest_release(&client, &server.uri(), None, "o", "n")
                 .await
                 .is_err()
         );
