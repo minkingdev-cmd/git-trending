@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM user_tracked_repos t\n           USING repos r\n           WHERE t.repo_id = r.id\n             AND t.user_id = $1\n             AND r.full_name = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4e04ecbba3360abe1b07049840e2cfe8221f5678956ca0e51a04c85a8c174f94"
+}

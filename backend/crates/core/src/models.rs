@@ -148,3 +148,24 @@ pub struct LeaderboardRow {
     pub watchers: Option<i32>,
     pub stars_today: Option<i32>,
 }
+
+/// Per-user track cap enforced by API (409 when `count_tracked` >= this).
+pub const TRACKED_REPO_LIMIT: i64 = 50;
+
+/// One row from `list_tracked` (repo metadata + best-effort metrics + add time).
+#[derive(Debug, Clone)]
+pub struct TrackedRow {
+    pub repo_id: i64,
+    pub full_name: String,
+    pub html_url: String,
+    pub description: Option<String>,
+    pub language: Option<String>,
+    pub topics: Vec<String>,
+    pub languages: serde_json::Value,
+    /// Prefer latest `tracked_daily` snapshot, else any board latest; None if none.
+    pub stars: Option<i32>,
+    pub forks: Option<i32>,
+    pub watchers: Option<i32>,
+    pub stars_today: Option<i32>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}

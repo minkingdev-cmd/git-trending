@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT r.full_name AS \"full_name!\"\n           FROM user_tracked_repos t\n           JOIN repos r ON r.id = t.repo_id\n           ORDER BY r.full_name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "full_name!",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5ec4633d8d25a941ea36fc521cfb6f09aa645a927955704cac491064fa8f7e12"
+}

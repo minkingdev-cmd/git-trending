@@ -1,7 +1,12 @@
 use chrono::NaiveDate;
 use sqlx::PgPool;
 
-use crate::models::{Board, LeaderboardFilter, LeaderboardRow, RepoInput, SnapshotInput};
+use crate::models::{
+    Board, LeaderboardFilter, LeaderboardRow, RepoInput, SnapshotInput, TrackedRow,
+};
+
+// Re-export so API/collectors can `use ght_core::store::TRACKED_REPO_LIMIT`.
+pub use crate::models::TRACKED_REPO_LIMIT;
 
 /// Bind helpers: empty slices / blank q mean "no filter" (SQL NULL).
 fn filter_langs(f: &LeaderboardFilter<'_>) -> Option<Vec<String>> {
@@ -414,6 +419,152 @@ pub async fn repo_history(
             stars_today: r.stars_today,
         })
         .collect())
+}
+
+// --- user tracked repos ---
+
+/// Insert a track row. Idempotent on `(user_id, repo_id)`.
+/// Caller is responsible for enforcing `TRACKED_REPO_LIMIT` via `count_tracked`.
+pub async fn track_repo(pool: &PgPool, user_id: i64, repo_id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"INSERT INTO user_tracked_repos (user_id, repo_id)
+           VALUES ($1, $2)
+           ON CONFLICT (user_id, repo_id) DO NOTHING"#,
+        user_id,
+        repo_id
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Remove a track by user + repo full_name. Returns true if a row was deleted.
+pub async fn untrack_repo(
+    pool: &PgPool,
+    user_id: i64,
+    full_name: &str,
+) -> Result<bool, sqlx::Error> {
+    let res = sqlx::query!(
+        r#"DELETE FROM user_tracked_repos t
+           USING repos r
+           WHERE t.repo_id = r.id
+             AND t.user_id = $1
+             AND r.full_name = $2"#,
+        user_id,
+        full_name
+    )
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected() > 0)
+}
+
+/// How many repos the user currently tracks.
+pub async fn count_tracked(pool: &PgPool, user_id: i64) -> Result<i64, sqlx::Error> {
+    let rec = sqlx::query!(
+        r#"SELECT COUNT(*) AS "cnt!"
+           FROM user_tracked_repos
+           WHERE user_id = $1"#,
+        user_id
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(rec.cnt)
+}
+
+/// Whether this user tracks this repo_id.
+pub async fn is_tracked(pool: &PgPool, user_id: i64, repo_id: i64) -> Result<bool, sqlx::Error> {
+    let rec = sqlx::query!(
+        r#"SELECT EXISTS(
+               SELECT 1 FROM user_tracked_repos
+               WHERE user_id = $1 AND repo_id = $2
+           ) AS "exists!""#,
+        user_id,
+        repo_id
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(rec.exists)
+}
+
+/// Distinct full_names of all tracked repos (collector scan).
+pub async fn list_all_tracked_full_names(pool: &PgPool) -> Result<Vec<String>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"SELECT DISTINCT r.full_name AS "full_name!"
+           FROM user_tracked_repos t
+           JOIN repos r ON r.id = t.repo_id
+           ORDER BY r.full_name"#
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| r.full_name).collect())
+}
+
+/// List repos tracked by one user, with optional q / topics / languages filter.
+/// Metrics prefer latest `tracked_daily` snapshot, else any board's latest snapshot.
+pub async fn list_tracked(
+    pool: &PgPool,
+    user_id: i64,
+    filter: LeaderboardFilter<'_>,
+) -> Result<Vec<TrackedRow>, sqlx::Error> {
+    let langs = filter_langs(&filter);
+    let topics = filter_topics(&filter);
+    let q = filter_q(&filter);
+    sqlx::query_as!(
+        TrackedRow,
+        r#"SELECT r.id AS "repo_id!",
+                  r.full_name AS "full_name!",
+                  r.html_url AS "html_url!",
+                  r.description,
+                  r.language,
+                  r.topics AS "topics!",
+                  r.languages AS "languages!",
+                  s.stars AS "stars?",
+                  s.forks AS "forks?",
+                  s.watchers AS "watchers?",
+                  s.stars_today AS "stars_today?",
+                  t.created_at AS "created_at!"
+           FROM user_tracked_repos t
+           JOIN repos r ON r.id = t.repo_id
+           LEFT JOIN LATERAL (
+               SELECT sn.stars, sn.forks, sn.watchers, sn.stars_today
+               FROM snapshots sn
+               WHERE sn.repo_id = r.id
+               ORDER BY
+                 CASE WHEN sn.board = 'tracked_daily' THEN 0 ELSE 1 END,
+                 sn.snapshot_date DESC
+               LIMIT 1
+           ) s ON true
+           WHERE t.user_id = $1
+             AND ($2::text IS NULL OR r.language = $2)
+             AND ($3::text[] IS NULL OR r.language_names && $3)
+             AND (
+               $4::text[] IS NULL
+               OR ($5 = 'and' AND r.topics @> $4)
+               OR ($5 = 'or' AND r.topics && $4)
+             )
+             AND (
+               $6::text IS NULL
+               OR r.full_name ILIKE '%' || $6 || '%'
+               OR COALESCE(r.description, '') ILIKE '%' || $6 || '%'
+               OR EXISTS (
+                 SELECT 1 FROM unnest(r.topics) AS tp(topic)
+                 WHERE tp.topic ILIKE '%' || $6 || '%'
+               )
+               OR EXISTS (
+                 SELECT 1 FROM unnest(r.language_names) AS ln(name)
+                 WHERE ln.name ILIKE '%' || $6 || '%'
+               )
+             )
+           ORDER BY t.created_at DESC"#,
+        user_id,
+        filter.language,
+        langs.as_deref(),
+        topics.as_deref(),
+        filter.topic_mode.as_str(),
+        q
+    )
+    .fetch_all(pool)
+    .await
 }
 
 #[cfg(test)]
@@ -1204,5 +1355,226 @@ mod tests {
     fn board_tracked_daily_roundtrip() {
         assert_eq!(Board::TrackedDaily.as_str(), "tracked_daily");
         assert_eq!(Board::parse("tracked_daily"), Some(Board::TrackedDaily));
+    }
+
+    #[test]
+    fn tracked_repo_limit_is_fifty() {
+        assert_eq!(TRACKED_REPO_LIMIT, 50);
+    }
+
+    async fn insert_test_user(pool: &PgPool, username: &str) -> i64 {
+        let existing: Option<i64> =
+            sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+                .bind(username)
+                .fetch_optional(pool)
+                .await
+                .unwrap();
+        let uid = if let Some(id) = existing {
+            id
+        } else {
+            sqlx::query_scalar(
+                "INSERT INTO users (username, password_hash) VALUES ($1, 'h') RETURNING id",
+            )
+            .bind(username)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+        };
+        // Isolate track rows for this user between re-runs.
+        sqlx::query("DELETE FROM user_tracked_repos WHERE user_id = $1")
+            .bind(uid)
+            .execute(pool)
+            .await
+            .unwrap();
+        uid
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn track_untrack_is_tracked_and_count() {
+        let pool = test_pool().await;
+        let date = NaiveDate::from_ymd_opt(2026, 8, 7).unwrap();
+        let uid = insert_test_user(&pool, "track_u1").await;
+        let id_a = upsert_repo(&pool, &repo("tracktest/a", Some("Rust")), date)
+            .await
+            .unwrap();
+        let id_b = upsert_repo(&pool, &repo("tracktest/b", Some("Go")), date)
+            .await
+            .unwrap();
+
+        assert_eq!(count_tracked(&pool, uid).await.unwrap(), 0);
+        assert!(!is_tracked(&pool, uid, id_a).await.unwrap());
+
+        track_repo(&pool, uid, id_a).await.unwrap();
+        track_repo(&pool, uid, id_b).await.unwrap();
+        // idempotent
+        track_repo(&pool, uid, id_a).await.unwrap();
+
+        assert_eq!(count_tracked(&pool, uid).await.unwrap(), 2);
+        assert!(is_tracked(&pool, uid, id_a).await.unwrap());
+        assert!(is_tracked(&pool, uid, id_b).await.unwrap());
+
+        let removed = untrack_repo(&pool, uid, "tracktest/a").await.unwrap();
+        assert!(removed);
+        assert!(!is_tracked(&pool, uid, id_a).await.unwrap());
+        assert_eq!(count_tracked(&pool, uid).await.unwrap(), 1);
+
+        let again = untrack_repo(&pool, uid, "tracktest/a").await.unwrap();
+        assert!(!again);
+        let missing = untrack_repo(&pool, uid, "tracktest/nope").await.unwrap();
+        assert!(!missing);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn list_tracked_filters_and_metrics_prefer_tracked_daily() {
+        let pool = test_pool().await;
+        let date = NaiveDate::from_ymd_opt(2026, 8, 7).unwrap();
+        let uid = insert_test_user(&pool, "track_u2").await;
+
+        let mut r_ai = repo_with_topics("tracklist/ai", Some("Python"), &["ai", "ml"]);
+        r_ai.language_names = vec!["Python".into(), "Rust".into()];
+        r_ai.languages_json = serde_json::json!([
+            {"name": "Python", "pct": 70.0},
+            {"name": "Rust", "pct": 30.0}
+        ]);
+        let id_ai = upsert_repo(&pool, &r_ai, date).await.unwrap();
+
+        let mut r_web = repo_with_topics("tracklist/web", Some("TypeScript"), &["web"]);
+        r_web.language_names = vec!["TypeScript".into()];
+        let id_web = upsert_repo(&pool, &r_web, date).await.unwrap();
+
+        track_repo(&pool, uid, id_ai).await.unwrap();
+        track_repo(&pool, uid, id_web).await.unwrap();
+
+        // Public board metrics should lose to tracked_daily when both exist.
+        upsert_snapshot(
+            &pool,
+            id_ai,
+            date,
+            Board::TopStars,
+            &SnapshotInput {
+                stars: 100,
+                forks: 10,
+                watchers: Some(5),
+                stars_today: None,
+            },
+        )
+        .await
+        .unwrap();
+        upsert_snapshot(
+            &pool,
+            id_ai,
+            date,
+            Board::TrackedDaily,
+            &SnapshotInput {
+                stars: 999,
+                forks: 88,
+                watchers: Some(7),
+                stars_today: Some(3),
+            },
+        )
+        .await
+        .unwrap();
+
+        let all = list_tracked(&pool, uid, LeaderboardFilter::empty())
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 2);
+        let ai = all.iter().find(|r| r.full_name == "tracklist/ai").unwrap();
+        assert_eq!(ai.stars, Some(999));
+        assert_eq!(ai.forks, Some(88));
+        assert_eq!(ai.watchers, Some(7));
+        assert_eq!(ai.stars_today, Some(3));
+        assert!(ai.topics.contains(&"ai".to_string()));
+
+        let topics = vec!["ai".to_string()];
+        let by_topic = list_tracked(
+            &pool,
+            uid,
+            LeaderboardFilter {
+                topics: Some(&topics),
+                topic_mode: TopicMode::And,
+                ..LeaderboardFilter::empty()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(by_topic.len(), 1);
+        assert_eq!(by_topic[0].full_name, "tracklist/ai");
+
+        let langs = vec!["TypeScript".to_string()];
+        let by_lang = list_tracked(
+            &pool,
+            uid,
+            LeaderboardFilter {
+                languages: Some(&langs),
+                ..LeaderboardFilter::empty()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(by_lang.len(), 1);
+        assert_eq!(by_lang[0].full_name, "tracklist/web");
+
+        let by_q = list_tracked(
+            &pool,
+            uid,
+            LeaderboardFilter {
+                q: Some("tracklist/ai"),
+                ..LeaderboardFilter::empty()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(by_q.len(), 1);
+        assert_eq!(by_q[0].full_name, "tracklist/ai");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn list_all_tracked_full_names_is_distinct() {
+        let pool = test_pool().await;
+        let date = NaiveDate::from_ymd_opt(2026, 8, 7).unwrap();
+        let u1 = insert_test_user(&pool, "track_u3a").await;
+        let u2 = insert_test_user(&pool, "track_u3b").await;
+        let id = upsert_repo(&pool, &repo("trackall/shared", None), date)
+            .await
+            .unwrap();
+        let id2 = upsert_repo(&pool, &repo("trackall/only1", None), date)
+            .await
+            .unwrap();
+        track_repo(&pool, u1, id).await.unwrap();
+        track_repo(&pool, u2, id).await.unwrap(); // same repo, two users
+        track_repo(&pool, u1, id2).await.unwrap();
+
+        let names = list_all_tracked_full_names(&pool).await.unwrap();
+        let mine: Vec<_> = names
+            .into_iter()
+            .filter(|n| n.starts_with("trackall/"))
+            .collect();
+        assert_eq!(mine, vec!["trackall/only1".to_string(), "trackall/shared".to_string()]);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn count_tracked_respects_per_user_cap_boundary() {
+        let pool = test_pool().await;
+        let date = NaiveDate::from_ymd_opt(2026, 8, 7).unwrap();
+        let uid = insert_test_user(&pool, "track_u_cap").await;
+
+        // Seed TRACKED_REPO_LIMIT distinct repos and track them all.
+        for i in 0..TRACKED_REPO_LIMIT {
+            let name = format!("trackcap/repo{i}");
+            let rid = upsert_repo(&pool, &repo(&name, None), date).await.unwrap();
+            track_repo(&pool, uid, rid).await.unwrap();
+        }
+        assert_eq!(
+            count_tracked(&pool, uid).await.unwrap(),
+            TRACKED_REPO_LIMIT
+        );
+        // Cap is enforced by API using this count; store still allows insert
+        // beyond limit (caller decides). Documented contract:
+        assert!(count_tracked(&pool, uid).await.unwrap() >= TRACKED_REPO_LIMIT);
     }
 }

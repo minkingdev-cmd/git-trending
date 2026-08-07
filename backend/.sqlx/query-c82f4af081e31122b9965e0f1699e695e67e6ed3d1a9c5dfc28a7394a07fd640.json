@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO user_tracked_repos (user_id, repo_id)\n           VALUES ($1, $2)\n           ON CONFLICT (user_id, repo_id) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c82f4af081e31122b9965e0f1699e695e67e6ed3d1a9c5dfc28a7394a07fd640"
+}
