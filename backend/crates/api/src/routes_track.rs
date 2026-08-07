@@ -1,14 +1,17 @@
 //! User-tracked repos: lookup / track / untrack / list.
 
 use crate::auth::extract::RequireAuth;
-use crate::routes_leaderboard::{languages_from_json, LanguageShareDto};
+use crate::routes_leaderboard::{
+    languages_from_json, parse_active_within, parse_exclude_archived, LanguageShareDto,
+};
 use crate::state::AppState;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
+use ght_core::health::compute_health;
 use ght_core::models::{LanguageShare, LeaderboardFilter, RepoInput, SnapshotInput};
 use ght_core::store::{self, TRACKED_REPO_LIMIT};
 use serde::{Deserialize, Serialize};
@@ -131,6 +134,10 @@ struct TrackedListParams {
     pub licenses: Option<String>,
     pub topic_mode: Option<String>,
     pub language: Option<String>,
+    /// Exclude archived; default true (`0`/`false`/`no` to include).
+    pub exclude_archived: Option<String>,
+    /// Only repos pushed within N days (and not archived).
+    pub active_within: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -146,6 +153,13 @@ pub struct TrackedRepoItem {
     pub watchers: Option<i32>,
     pub status: String,
     pub added_at: String,
+    pub pushed_at: Option<DateTime<Utc>>,
+    pub archived: bool,
+    pub open_issues_count: Option<i32>,
+    pub created_at_gh: Option<DateTime<Utc>>,
+    pub latest_release_at: Option<DateTime<Utc>>,
+    /// Runtime health: `active` | `stale` | `archived` | `unknown`.
+    pub health: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -182,6 +196,10 @@ struct GhRepo {
     watchers: Option<i32>,
     languages: Vec<LanguageShare>,
     language_names: Vec<String>,
+    pushed_at: Option<DateTime<Utc>>,
+    archived: bool,
+    open_issues_count: Option<i32>,
+    created_at_gh: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -201,6 +219,15 @@ struct GhRepoJson {
     subscribers_count: Option<i32>,
     owner: Option<GhOwner>,
     name: Option<String>,
+    #[serde(default)]
+    pushed_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    archived: bool,
+    #[serde(default)]
+    open_issues_count: Option<i32>,
+    /// GitHub `created_at` → `created_at_gh`.
+    #[serde(default)]
+    created_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -330,6 +357,10 @@ async fn fetch_github_repo(
         watchers: meta.subscribers_count,
         languages,
         language_names,
+        pushed_at: meta.pushed_at,
+        archived: meta.archived,
+        open_issues_count: meta.open_issues_count,
+        created_at_gh: meta.created_at,
     })
 }
 
@@ -494,10 +525,17 @@ fn parse_csv(raw: Option<&str>, lowercase: bool) -> Vec<String> {
     out
 }
 
+fn item_health(archived: bool, pushed_at: Option<DateTime<Utc>>) -> String {
+    compute_health(archived, pushed_at, Utc::now())
+        .as_str()
+        .to_string()
+}
+
 fn gh_to_item(
     gh: &GhRepo,
     status: &str,
-    added_at: chrono::DateTime<chrono::Utc>,
+    added_at: DateTime<Utc>,
+    latest_release_at: Option<DateTime<Utc>>,
 ) -> TrackedRepoItem {
     TrackedRepoItem {
         full_name: gh.full_name.clone(),
@@ -516,6 +554,12 @@ fn gh_to_item(
         watchers: gh.watchers,
         status: status.to_string(),
         added_at: added_at.to_rfc3339(),
+        pushed_at: gh.pushed_at,
+        archived: gh.archived,
+        open_issues_count: gh.open_issues_count,
+        created_at_gh: gh.created_at_gh,
+        latest_release_at,
+        health: item_health(gh.archived, gh.pushed_at),
     }
 }
 
@@ -523,6 +567,7 @@ fn tracked_row_to_item(
     row: ght_core::models::TrackedRow,
     status: &str,
 ) -> TrackedRepoItem {
+    let health = item_health(row.archived, row.pushed_at);
     TrackedRepoItem {
         full_name: row.full_name,
         html_url: row.html_url,
@@ -535,6 +580,12 @@ fn tracked_row_to_item(
         watchers: row.watchers,
         status: status.to_string(),
         added_at: row.created_at.to_rfc3339(),
+        pushed_at: row.pushed_at,
+        archived: row.archived,
+        open_issues_count: row.open_issues_count,
+        created_at_gh: row.created_at_gh,
+        latest_release_at: row.latest_release_at,
+        health,
     }
 }
 
@@ -689,6 +740,8 @@ async fn track(
         topics: gh.topics.clone(),
         languages_json,
         language_names: gh.language_names.clone(),
+        // Health columns are written via update_repo_health_keep_release below
+        // (upsert leaves health alone so board re-upserts never wipe enrich).
         pushed_at: None,
         archived: false,
         open_issues_count: None,
@@ -703,6 +756,21 @@ async fn track(
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
+
+    // Persist health from GitHub meta; keep prior latest_release_at (no release fetch here).
+    if let Err(e) = store::update_repo_health_keep_release(
+        &state.pool,
+        repo_id,
+        gh.pushed_at,
+        gh.archived,
+        gh.open_issues_count,
+        gh.created_at_gh,
+    )
+    .await
+    {
+        tracing::warn!(error = %e, "update_repo_health on track failed");
+        // non-fatal: tracking still proceeds
+    }
 
     // Index onto public metric boards + tracked_daily so the repo participates
     // in the same leaderboard ranking / filter lists as crawler-indexed repos.
@@ -735,21 +803,25 @@ async fn track(
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
 
-    // Prefer DB created_at when already tracked.
-    let added_at = if already {
-        match store::list_tracked(&state.pool, claims.sub, LeaderboardFilter::empty()).await {
-            Ok(rows) => rows
-                .into_iter()
-                .find(|r| r.full_name == gh.full_name)
-                .map(|r| r.created_at)
-                .unwrap_or_else(Utc::now),
-            Err(_) => Utc::now(),
+    // Prefer DB created_at / latest_release_at when already tracked.
+    let (added_at, latest_release_at) = match store::list_tracked(
+        &state.pool,
+        claims.sub,
+        LeaderboardFilter::empty(),
+    )
+    .await
+    {
+        Ok(rows) => {
+            if let Some(r) = rows.into_iter().find(|r| r.full_name == gh.full_name) {
+                (r.created_at, r.latest_release_at)
+            } else {
+                (Utc::now(), None)
+            }
         }
-    } else {
-        Utc::now()
+        Err(_) => (Utc::now(), None),
     };
 
-    let item = gh_to_item(&gh, status, added_at);
+    let item = gh_to_item(&gh, status, added_at, latest_release_at);
     let code = if already {
         StatusCode::OK
     } else {
@@ -818,6 +890,17 @@ async fn list_tracked_api(
             }
         },
     };
+    let exclude_archived = parse_exclude_archived(params.exclude_archived.as_deref());
+    let active_within_days = match parse_active_within(params.active_within.as_deref()) {
+        Ok(v) => v,
+        Err(msg) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": msg})),
+            )
+                .into_response();
+        }
+    };
 
     let filter = LeaderboardFilter {
         language: language.as_deref(),
@@ -838,8 +921,8 @@ async fn list_tracked_api(
         },
         topic_mode,
         q: q.as_deref(),
-        exclude_archived: false,
-        active_within_days: None,
+        exclude_archived,
+        active_within_days,
     };
 
     let rows = match store::list_tracked(&state.pool, claims.sub, filter).await {
@@ -989,7 +1072,11 @@ mod tests {
                 "forks_count": 7,
                 "subscribers_count": 3,
                 "owner": {{"login": "{owner}"}},
-                "name": "{name}"
+                "name": "{name}",
+                "pushed_at": "2026-08-01T12:00:00Z",
+                "archived": false,
+                "open_issues_count": 5,
+                "created_at": "2020-01-15T08:30:00Z"
             }}"#,
             private = if private { "true" } else { "false" }
         )
@@ -1045,6 +1132,20 @@ mod tests {
             .iter()
             .any(|t| t == "ai"));
         assert_eq!(v["item"]["languages"].as_array().unwrap().len(), 2);
+        assert_eq!(v["item"]["archived"], false);
+        assert_eq!(v["item"]["open_issues_count"], 5);
+        assert_eq!(v["item"]["health"], "active");
+        assert!(v["item"]["pushed_at"].is_string());
+        // Health columns persisted for list/leaderboard.
+        let row: (bool, Option<i32>) = sqlx::query_as(
+            r#"SELECT archived AS "archived!", open_issues_count
+               FROM repos WHERE full_name = 'acme/widget'"#,
+        )
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+        assert!(!row.0);
+        assert_eq!(row.1, Some(5));
 
         // Second track → 200 (idempotent)
         let (status, body) = call(

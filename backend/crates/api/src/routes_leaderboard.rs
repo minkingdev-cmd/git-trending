@@ -4,6 +4,8 @@ use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::{Json, Router};
+use chrono::{DateTime, Utc};
+use ght_core::health::compute_health;
 use ght_core::models::{Board, LanguageShare, LeaderboardFilter, TopicMode};
 use ght_core::store as store;
 use serde::{Deserialize, Serialize};
@@ -26,6 +28,10 @@ pub struct TopParams {
     pub q: Option<String>,
     /// Optional snapshot date YYYY-MM-DD; defaults to latest
     pub date: Option<String>,
+    /// Exclude archived repos; default true (`1`/`true`/`yes`, off via `0`/`false`/`no`).
+    pub exclude_archived: Option<String>,
+    /// Only repos with `pushed_at` within N days (and not archived).
+    pub active_within: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -44,6 +50,10 @@ pub struct TrendingParams {
     pub q: Option<String>,
     /// Optional snapshot date YYYY-MM-DD; defaults to latest
     pub date: Option<String>,
+    /// Exclude archived repos; default true (`1`/`true`/`yes`, off via `0`/`false`/`no`).
+    pub exclude_archived: Option<String>,
+    /// Only repos with `pushed_at` within N days (and not archived).
+    pub active_within: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -91,6 +101,13 @@ pub struct LeaderboardItem {
     pub stars_today: Option<i32>,
     /// True when the authenticated user tracks this repo.
     pub tracked_by_me: bool,
+    pub pushed_at: Option<DateTime<Utc>>,
+    pub archived: bool,
+    pub open_issues_count: Option<i32>,
+    pub created_at_gh: Option<DateTime<Utc>>,
+    pub latest_release_at: Option<DateTime<Utc>>,
+    /// Runtime health: `active` | `stale` | `archived` | `unknown`.
+    pub health: String,
 }
 
 #[derive(Serialize)]
@@ -168,6 +185,30 @@ fn parse_topic_mode(raw: Option<&str>) -> Result<TopicMode, ()> {
     }
 }
 
+/// Default **on**: missing / empty / truthy → exclude archived.
+pub fn parse_exclude_archived(s: Option<&str>) -> bool {
+    match s.map(str::trim) {
+        None => true,
+        Some("") => true,
+        Some("0") | Some("false") | Some("no") => false,
+        _ => true,
+    }
+}
+
+/// Optional positive day count; missing/empty → no filter.
+pub fn parse_active_within(s: Option<&str>) -> Result<Option<i32>, &'static str> {
+    let Some(raw) = s.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let n: i32 = raw
+        .parse()
+        .map_err(|_| "active_within must be a positive integer days")?;
+    if n <= 0 {
+        return Err("active_within must be a positive integer days");
+    }
+    Ok(Some(n))
+}
+
 /// Build filter from parsed query pieces.
 ///
 /// Backward compat:
@@ -187,6 +228,8 @@ struct ParsedFilters {
     topics: Vec<String>,
     topic_mode: TopicMode,
     q: Option<String>,
+    exclude_archived: bool,
+    active_within_days: Option<i32>,
 }
 
 fn parse_filters(
@@ -196,6 +239,8 @@ fn parse_filters(
     topics_csv: Option<&str>,
     topic_mode: Option<&str>,
     q: Option<&str>,
+    exclude_archived: Option<&str>,
+    active_within: Option<&str>,
 ) -> Result<ParsedFilters, &'static str> {
     let topic_mode = parse_topic_mode(topic_mode).map_err(|_| "topic_mode must be and|or")?;
     let languages = parse_csv_list(languages_csv, false);
@@ -213,6 +258,8 @@ fn parse_filters(
     };
     let topics = parse_csv_list(topics_csv, true);
     let q = q.map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let exclude_archived = parse_exclude_archived(exclude_archived);
+    let active_within_days = parse_active_within(active_within)?;
     Ok(ParsedFilters {
         language,
         languages,
@@ -221,6 +268,8 @@ fn parse_filters(
         topics,
         topic_mode,
         q,
+        exclude_archived,
+        active_within_days,
     })
 }
 
@@ -229,6 +278,12 @@ pub fn languages_from_json(v: &serde_json::Value) -> Vec<LanguageShareDto> {
         Ok(shares) => shares.into_iter().map(LanguageShareDto::from).collect(),
         Err(_) => vec![],
     }
+}
+
+fn row_health(archived: bool, pushed_at: Option<DateTime<Utc>>) -> String {
+    compute_health(archived, pushed_at, Utc::now())
+        .as_str()
+        .to_string()
 }
 
 fn to_items(
@@ -252,6 +307,7 @@ fn to_items(
                 }
             }
             let tracked_by_me = tracked.contains(&r.full_name);
+            let health = row_health(r.archived, r.pushed_at);
             LeaderboardItem {
                 rank: r.rank,
                 full_name: r.full_name,
@@ -266,6 +322,12 @@ fn to_items(
                 watchers: r.watchers,
                 stars_today: r.stars_today,
                 tracked_by_me,
+                pushed_at: r.pushed_at,
+                archived: r.archived,
+                open_issues_count: r.open_issues_count,
+                created_at_gh: r.created_at_gh,
+                latest_release_at: r.latest_release_at,
+                health,
             }
         })
         .collect()
@@ -411,9 +473,8 @@ fn store_filter<'a>(parsed: &'a ParsedFilters) -> LeaderboardFilter<'a> {
         },
         topic_mode: parsed.topic_mode,
         q: parsed.q.as_deref(),
-        // Public boards will pass true from API in a later task.
-        exclude_archived: false,
-        active_within_days: None,
+        exclude_archived: parsed.exclude_archived,
+        active_within_days: parsed.active_within_days,
     }
 }
 
@@ -451,6 +512,8 @@ async fn top(
         params.topics.as_deref(),
         params.topic_mode.as_deref(),
         params.q.as_deref(),
+        params.exclude_archived.as_deref(),
+        params.active_within.as_deref(),
     ) {
         Ok(p) => p,
         Err(msg) => {
@@ -523,6 +586,8 @@ async fn trending(
         params.topics.as_deref(),
         params.topic_mode.as_deref(),
         params.q.as_deref(),
+        params.exclude_archived.as_deref(),
+        params.active_within.as_deref(),
     ) {
         Ok(p) => p,
         Err(msg) => {
@@ -709,7 +774,10 @@ mod tests {
     use crate::auth::tokens;
     use crate::state::AppState;
 
-    use super::{parse_csv_list, parse_filters, parse_topic_mode, languages_from_json};
+    use super::{
+        languages_from_json, parse_active_within, parse_csv_list, parse_exclude_archived,
+        parse_filters, parse_topic_mode,
+    };
     use ght_core::models::TopicMode;
 
     async fn test_state() -> AppState {
@@ -888,10 +956,30 @@ mod tests {
 
     #[test]
     fn legacy_language_echoes_but_not_multi_filter() {
-        let p = parse_filters(Some("Rust"), None, None, None, None, None).unwrap();
+        let p = parse_filters(Some("Rust"), None, None, None, None, None, None, None).unwrap();
         assert_eq!(p.language.as_deref(), Some("Rust"));
         assert!(p.languages.is_empty(), "legacy must not bind multi-lang SQL");
         assert_eq!(p.languages_echo, vec!["Rust".to_string()]);
+        assert!(p.exclude_archived, "exclude_archived defaults true");
+        assert!(p.active_within_days.is_none());
+    }
+
+    #[test]
+    fn parse_exclude_archived_default_and_off() {
+        assert!(parse_exclude_archived(None));
+        assert!(parse_exclude_archived(Some("1")));
+        assert!(parse_exclude_archived(Some("true")));
+        assert!(!parse_exclude_archived(Some("0")));
+        assert!(!parse_exclude_archived(Some("false")));
+        assert!(!parse_exclude_archived(Some("no")));
+    }
+
+    #[test]
+    fn parse_active_within_optional_and_rejects_bad() {
+        assert_eq!(parse_active_within(None).unwrap(), None);
+        assert_eq!(parse_active_within(Some("90")).unwrap(), Some(90));
+        assert!(parse_active_within(Some("0")).is_err());
+        assert!(parse_active_within(Some("abc")).is_err());
     }
 
     #[test]
@@ -1163,5 +1251,114 @@ mod tests {
         let (status, body) = get(state.clone(), "/api/ready", None).await;
         assert_eq!(status, StatusCode::OK);
         assert!(body.contains("ready"));
+    }
+
+    /// Task 5: default exclude_archived drops archived repos; health fields present.
+    #[tokio::test]
+    #[serial]
+    async fn trending_excludes_archived_by_default() {
+        let state = test_state().await;
+        let date = NaiveDate::from_ymd_opt(2026, 8, 6).unwrap();
+        let cookie = auth_cookie(&state);
+        let now = chrono::Utc::now();
+
+        let id_active = store::upsert_repo(&state.pool, &repo("h/active", Some("Rust")), date)
+            .await
+            .unwrap();
+        store::update_repo_health(
+            &state.pool,
+            id_active,
+            Some(now),
+            false,
+            Some(3),
+            Some(now - chrono::Duration::days(400)),
+            Some(now - chrono::Duration::days(10)),
+        )
+        .await
+        .unwrap();
+        store::upsert_snapshot(
+            &state.pool,
+            id_active,
+            date,
+            Board::TrendingDaily,
+            &SnapshotInput {
+                stars: 100,
+                forks: 1,
+                watchers: None,
+                stars_today: Some(20),
+            },
+        )
+        .await
+        .unwrap();
+
+        let id_archived =
+            store::upsert_repo(&state.pool, &repo("h/archived", Some("Rust")), date)
+                .await
+                .unwrap();
+        store::update_repo_health(
+            &state.pool,
+            id_archived,
+            Some(now),
+            true,
+            Some(99),
+            Some(now - chrono::Duration::days(800)),
+            None,
+        )
+        .await
+        .unwrap();
+        store::upsert_snapshot(
+            &state.pool,
+            id_archived,
+            date,
+            Board::TrendingDaily,
+            &SnapshotInput {
+                stars: 500,
+                forks: 1,
+                watchers: None,
+                stars_today: Some(90),
+            },
+        )
+        .await
+        .unwrap();
+
+        // Default: archived excluded; only active repo.
+        let (status, body) =
+            get(state.clone(), "/api/leaderboard/trending", Some(cookie.clone())).await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let items = v["items"].as_array().unwrap();
+        assert_eq!(items.len(), 1, "body={body}");
+        assert_eq!(items[0]["full_name"], "h/active");
+        assert_eq!(items[0]["archived"], false);
+        assert_eq!(items[0]["health"], "active");
+        assert_eq!(items[0]["open_issues_count"], 3);
+        assert!(items[0]["pushed_at"].is_string());
+        assert!(items[0]["created_at_gh"].is_string());
+        assert!(items[0]["latest_release_at"].is_string());
+
+        // Opt-in: include archived.
+        let (status, body) = get(
+            state.clone(),
+            "/api/leaderboard/trending?exclude_archived=0",
+            Some(cookie),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let names: Vec<&str> = v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["full_name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["h/archived", "h/active"]);
+        let arc = v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["full_name"] == "h/archived")
+            .unwrap();
+        assert_eq!(arc["archived"], true);
+        assert_eq!(arc["health"], "archived");
     }
 }
