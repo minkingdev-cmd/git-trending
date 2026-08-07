@@ -72,8 +72,10 @@ pub struct LanguageShare {
 pub struct LeaderboardFilter<'a> {
     /// Legacy primary-language equality (`repos.language`).
     pub language: Option<&'a str>,
-    /// Multi-language OR filter against `repos.language_names`.
+    /// Multi-language OR filter against `repos.language_names` or primary language.
     pub languages: Option<&'a [String]>,
+    /// Multi-license OR filter against `repos.license`.
+    pub licenses: Option<&'a [String]>,
     pub topics: Option<&'a [String]>,
     pub topic_mode: TopicMode,
     pub q: Option<&'a str>,
@@ -84,6 +86,7 @@ impl Default for LeaderboardFilter<'_> {
         Self {
             language: None,
             languages: None,
+            licenses: None,
             topics: None,
             topic_mode: TopicMode::And,
             q: None,

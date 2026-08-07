@@ -13,6 +13,7 @@ import {
 import type {
   LanguageFacet,
   LeaderboardResponse,
+  LicenseFacet,
   MetaResponse,
   TopicFacet,
   TrackedRepoItem,
@@ -48,13 +49,20 @@ interface Props {
 }
 
 function aggregateFacetsFromItems(
-  items: Array<{ topics?: string[]; languages?: { name: string }[]; language?: string | null }>,
+  items: Array<{
+    topics?: string[];
+    languages?: { name: string }[];
+    language?: string | null;
+    license?: string | null;
+  }>,
 ): {
   topics: TopicFacet[];
   languages: LanguageFacet[];
+  licenses: LicenseFacet[];
 } {
   const topicCounts = new Map<string, number>();
   const langCounts = new Map<string, number>();
+  const licenseCounts = new Map<string, number>();
   for (const item of items) {
     for (const t of item.topics ?? []) {
       topicCounts.set(t, (topicCounts.get(t) ?? 0) + 1);
@@ -70,6 +78,9 @@ function aggregateFacetsFromItems(
         langCounts.set(share.name, (langCounts.get(share.name) ?? 0) + 1);
       }
     }
+    if (item.license) {
+      licenseCounts.set(item.license, (licenseCounts.get(item.license) ?? 0) + 1);
+    }
   }
   const topics: TopicFacet[] = [...topicCounts.entries()]
     .map(([topic, count]) => ({ topic, count }))
@@ -77,7 +88,10 @@ function aggregateFacetsFromItems(
   const languages: LanguageFacet[] = [...langCounts.entries()]
     .map(([language, count]) => ({ language, count }))
     .sort((a, b) => b.count - a.count || a.language.localeCompare(b.language));
-  return { topics, languages };
+  const licenses: LicenseFacet[] = [...licenseCounts.entries()]
+    .map(([license, count]) => ({ license, count }))
+    .sort((a, b) => b.count - a.count || a.license.localeCompare(b.license));
+  return { topics, languages, licenses };
 }
 
 export default function Leaderboard({
@@ -95,6 +109,7 @@ export default function Leaderboard({
   const [topics, setTopics] = useState<string[]>(initial.topics);
   const [topicMode, setTopicMode] = useState<TopicMode>(initial.topicMode);
   const [languages, setLanguages] = useState<string[]>(initial.languages);
+  const [licenses, setLicenses] = useState<string[]>(initial.licenses);
   const [dates, setDates] = useState<string[]>([]);
   const [data, setData] = useState<LeaderboardResponse | null>(null);
   const [trackedItems, setTrackedItems] = useState<TrackedRepoItem[]>([]);
@@ -128,9 +143,10 @@ export default function Leaderboard({
       topics,
       topicMode,
       languages,
+      licenses,
     };
     window.history.replaceState(null, "", buildSearch(state));
-  }, [board, metric, date, q, topics, topicMode, languages]);
+  }, [board, metric, date, q, topics, topicMode, languages, licenses]);
 
   useEffect(() => {
     api<MetaResponse>("/api/meta")
@@ -150,6 +166,7 @@ export default function Leaderboard({
           q,
           topics,
           languages,
+          licenses,
           topicMode,
         });
         setTrackedItems(items);
@@ -161,6 +178,7 @@ export default function Leaderboard({
         if (topics.length) params.set("topics", topics.join(","));
         if (topicMode !== "and") params.set("topic_mode", topicMode);
         if (languages.length) params.set("languages", languages.join(","));
+        if (licenses.length) params.set("licenses", licenses.join(","));
         const qs = params.toString();
         const path =
           board === "top"
@@ -178,26 +196,41 @@ export default function Leaderboard({
     } finally {
       setLoading(false);
     }
-  }, [board, metric, date, q, topics, topicMode, languages, onUnauthorized]);
+  }, [board, metric, date, q, topics, topicMode, languages, licenses, onUnauthorized]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const { topicFacets, languageFacets } = useMemo(() => {
+  const { topicFacets, languageFacets, licenseFacets } = useMemo(() => {
     if (board === "tracked") {
       const agg = aggregateFacetsFromItems(trackedItems);
-      return { topicFacets: agg.topics, languageFacets: agg.languages };
+      return {
+        topicFacets: agg.topics,
+        languageFacets: agg.languages,
+        licenseFacets: agg.licenses,
+      };
     }
-    if (!data) return { topicFacets: [] as TopicFacet[], languageFacets: [] as LanguageFacet[] };
-    if (data.topic_facets || data.language_facets) {
+    if (!data) {
+      return {
+        topicFacets: [] as TopicFacet[],
+        languageFacets: [] as LanguageFacet[],
+        licenseFacets: [] as LicenseFacet[],
+      };
+    }
+    if (data.topic_facets || data.language_facets || data.license_facets) {
       return {
         topicFacets: data.topic_facets ?? [],
         languageFacets: data.language_facets ?? [],
+        licenseFacets: data.license_facets ?? [],
       };
     }
     const agg = aggregateFacetsFromItems(data.items);
-    return { topicFacets: agg.topics, languageFacets: agg.languages };
+    return {
+      topicFacets: agg.topics,
+      languageFacets: agg.languages,
+      licenseFacets: agg.licenses,
+    };
   }, [board, data, trackedItems]);
 
   const onToggleTopic = useCallback((topic: string) => {
@@ -208,10 +241,15 @@ export default function Leaderboard({
     setLanguages((cur) => toggleInList(cur, lang));
   }, []);
 
+  const onToggleLicense = useCallback((license: string) => {
+    setLicenses((cur) => toggleInList(cur, license));
+  }, []);
+
   const onClearFilters = useCallback(() => {
     setQ("");
     setTopics([]);
     setLanguages([]);
+    setLicenses([]);
   }, []);
 
   const onUntrack = useCallback(
@@ -268,10 +306,11 @@ export default function Leaderboard({
           : `总榜·${metric}`;
     const langHint = languages.length ? `lang×${languages.length}` : "全部语言";
     const parts = [`${n} 个结果`, boardHint, langHint];
+    if (licenses.length) parts.push(`lic×${licenses.length}`);
     if (topics.length) parts.push(`tag ${topicMode.toUpperCase()}`);
     if (q.trim()) parts.push(`q`);
     return parts.join(" · ");
-  }, [data, board, metric, languages, topics, topicMode, q, trackedItems]);
+  }, [data, board, metric, languages, licenses, topics, topicMode, q, trackedItems]);
 
   const showPublicTable = board !== "tracked";
 
@@ -340,8 +379,10 @@ export default function Leaderboard({
           topics={topics}
           topicMode={topicMode}
           languages={languages}
+          licenses={licenses}
           topicFacets={topicFacets}
           languageFacets={languageFacets}
+          licenseFacets={licenseFacets}
           density={density}
           showDesc={showDesc}
           onBoard={setBoard}
@@ -351,6 +392,7 @@ export default function Leaderboard({
           onToggleTopic={onToggleTopic}
           onTopicMode={setTopicMode}
           onToggleLanguage={onToggleLanguage}
+          onToggleLicense={onToggleLicense}
           onClearFilters={onClearFilters}
           onDensity={setDensity}
           onShowDesc={setShowDesc}
@@ -371,6 +413,17 @@ export default function Leaderboard({
                   <span className="x">×</span>
                 </button>
               ))}
+              {licenses.map((l) => (
+                <button
+                  key={l}
+                  type="button"
+                  className="chip selected-only"
+                  onClick={() => onToggleLicense(l)}
+                >
+                  {l}
+                  <span className="x">×</span>
+                </button>
+              ))}
               {topics.map((t) => (
                 <button
                   key={t}
@@ -382,7 +435,7 @@ export default function Leaderboard({
                   <span className="x">×</span>
                 </button>
               ))}
-              {hasActiveFilters({ q, topics, languages }) && (
+              {hasActiveFilters({ q, topics, languages, licenses }) && (
                 <button
                   type="button"
                   className="clear-filters"
@@ -402,7 +455,7 @@ export default function Leaderboard({
             loading={loading}
             error={error}
             untrackError={untrackError}
-            hasFilters={hasActiveFilters({ q, topics, languages })}
+            hasFilters={hasActiveFilters({ q, topics, languages, licenses })}
             onUntrack={(name) => void onUntrack(name)}
             onSelectRepo={setHistoryRepo}
             onRetry={() => void load()}
@@ -441,8 +494,10 @@ export default function Leaderboard({
             density={density}
             selectedTopics={topics}
             selectedLanguages={languages}
+            selectedLicenses={licenses}
             onToggleTopic={onToggleTopic}
             onToggleLanguage={onToggleLanguage}
+            onToggleLicense={onToggleLicense}
             onSelectRepo={setHistoryRepo}
           />
         )}

@@ -189,6 +189,7 @@ export interface ListTrackedParams {
   q?: string;
   topics?: string[];
   languages?: string[];
+  licenses?: string[];
   topicMode?: "and" | "or";
 }
 
@@ -199,6 +200,7 @@ export async function listTrackedRepos(
   if (params.q?.trim()) qs.set("q", params.q.trim());
   if (params.topics?.length) qs.set("topics", params.topics.join(","));
   if (params.languages?.length) qs.set("languages", params.languages.join(","));
+  if (params.licenses?.length) qs.set("licenses", params.licenses.join(","));
   if (params.topicMode && params.topicMode !== "and") {
     qs.set("topic_mode", params.topicMode);
   }

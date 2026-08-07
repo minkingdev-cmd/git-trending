@@ -16,11 +16,13 @@ pub struct TopParams {
     pub language: Option<String>,
     /// Comma-separated multi-language OR filter against `language_names`.
     pub languages: Option<String>,
+    /// Comma-separated license OR filter (SPDX / short key).
+    pub licenses: Option<String>,
     /// Comma-separated topics (lowercase).
     pub topics: Option<String>,
     /// `and` | `or`; default `and`.
     pub topic_mode: Option<String>,
-    /// Keyword search over full_name, description, topics, language names.
+    /// Keyword search over full_name, description, topics, language names, license.
     pub q: Option<String>,
     /// Optional snapshot date YYYY-MM-DD; defaults to latest
     pub date: Option<String>,
@@ -32,11 +34,13 @@ pub struct TrendingParams {
     pub language: Option<String>,
     /// Comma-separated multi-language OR filter against `language_names`.
     pub languages: Option<String>,
+    /// Comma-separated license OR filter (SPDX / short key).
+    pub licenses: Option<String>,
     /// Comma-separated topics (lowercase).
     pub topics: Option<String>,
     /// `and` | `or`; default `and`.
     pub topic_mode: Option<String>,
-    /// Keyword search over full_name, description, topics, language names.
+    /// Keyword search over full_name, description, topics, language names, license.
     pub q: Option<String>,
     /// Optional snapshot date YYYY-MM-DD; defaults to latest
     pub date: Option<String>,
@@ -102,6 +106,12 @@ pub struct LanguageFacet {
 }
 
 #[derive(Serialize)]
+pub struct LicenseFacet {
+    pub license: String,
+    pub count: i64,
+}
+
+#[derive(Serialize)]
 pub struct LeaderboardResp {
     pub date: String,
     pub board: String,
@@ -110,6 +120,8 @@ pub struct LeaderboardResp {
     /// Echo of multi-language filter (comma-split, non-empty).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub languages_filter: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub licenses_filter: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub q: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -122,6 +134,8 @@ pub struct LeaderboardResp {
     pub topic_facets: Option<Vec<TopicFacet>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language_facets: Option<Vec<LanguageFacet>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub license_facets: Option<Vec<LicenseFacet>>,
 }
 
 /// Parse comma-separated list; trim, drop empty. For topics, also lowercase.
@@ -169,6 +183,7 @@ struct ParsedFilters {
     languages: Vec<String>,
     /// Echo for response: multi-lang param, or legacy single language alone.
     languages_echo: Vec<String>,
+    licenses: Vec<String>,
     topics: Vec<String>,
     topic_mode: TopicMode,
     q: Option<String>,
@@ -177,12 +192,14 @@ struct ParsedFilters {
 fn parse_filters(
     language: Option<&str>,
     languages_csv: Option<&str>,
+    licenses_csv: Option<&str>,
     topics_csv: Option<&str>,
     topic_mode: Option<&str>,
     q: Option<&str>,
 ) -> Result<ParsedFilters, &'static str> {
     let topic_mode = parse_topic_mode(topic_mode).map_err(|_| "topic_mode must be and|or")?;
     let languages = parse_csv_list(languages_csv, false);
+    let licenses = parse_csv_list(licenses_csv, false);
     let language = language
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -200,6 +217,7 @@ fn parse_filters(
         language,
         languages,
         languages_echo,
+        licenses,
         topics,
         topic_mode,
         q,
@@ -254,9 +272,12 @@ fn to_items(
 }
 
 /// v1 facets: unnest from the filtered result set (not disjunctive over board/date).
-fn facets_from_items(items: &[LeaderboardItem]) -> (Vec<TopicFacet>, Vec<LanguageFacet>) {
+fn facets_from_items(
+    items: &[LeaderboardItem],
+) -> (Vec<TopicFacet>, Vec<LanguageFacet>, Vec<LicenseFacet>) {
     let mut topic_counts: HashMap<String, i64> = HashMap::new();
     let mut lang_counts: HashMap<String, i64> = HashMap::new();
+    let mut license_counts: HashMap<String, i64> = HashMap::new();
     for item in items {
         for t in &item.topics {
             *topic_counts.entry(t.clone()).or_insert(0) += 1;
@@ -269,6 +290,11 @@ fn facets_from_items(items: &[LeaderboardItem]) -> (Vec<TopicFacet>, Vec<Languag
         } else {
             for share in &item.languages {
                 *lang_counts.entry(share.name.clone()).or_insert(0) += 1;
+            }
+        }
+        if let Some(ref lic) = item.license {
+            if !lic.is_empty() {
+                *license_counts.entry(lic.clone()).or_insert(0) += 1;
             }
         }
     }
@@ -286,7 +312,16 @@ fn facets_from_items(items: &[LeaderboardItem]) -> (Vec<TopicFacet>, Vec<Languag
             .cmp(&a.count)
             .then_with(|| a.language.cmp(&b.language))
     });
-    (topic_facets, language_facets)
+    let mut license_facets: Vec<LicenseFacet> = license_counts
+        .into_iter()
+        .map(|(license, count)| LicenseFacet { license, count })
+        .collect();
+    license_facets.sort_by(|a, b| {
+        b.count
+            .cmp(&a.count)
+            .then_with(|| a.license.cmp(&b.license))
+    });
+    (topic_facets, language_facets, license_facets)
 }
 
 fn empty_resp(board: Board, parsed: &ParsedFilters) -> LeaderboardResp {
@@ -299,6 +334,11 @@ fn empty_resp(board: Board, parsed: &ParsedFilters) -> LeaderboardResp {
         } else {
             Some(parsed.languages_echo.clone())
         },
+        licenses_filter: if parsed.licenses.is_empty() {
+            None
+        } else {
+            Some(parsed.licenses.clone())
+        },
         q: parsed.q.clone(),
         topics_filter: if parsed.topics.is_empty() {
             None
@@ -309,6 +349,7 @@ fn empty_resp(board: Board, parsed: &ParsedFilters) -> LeaderboardResp {
         items: vec![],
         topic_facets: Some(vec![]),
         language_facets: Some(vec![]),
+        license_facets: Some(vec![]),
     }
 }
 
@@ -320,7 +361,7 @@ fn ok_resp(
     tracked: &std::collections::HashSet<String>,
 ) -> LeaderboardResp {
     let items = to_items(rows, tracked);
-    let (topic_facets, language_facets) = facets_from_items(&items);
+    let (topic_facets, language_facets, license_facets) = facets_from_items(&items);
     LeaderboardResp {
         date: date.format("%Y-%m-%d").to_string(),
         board: board.as_str().to_string(),
@@ -329,6 +370,11 @@ fn ok_resp(
             None
         } else {
             Some(parsed.languages_echo.clone())
+        },
+        licenses_filter: if parsed.licenses.is_empty() {
+            None
+        } else {
+            Some(parsed.licenses.clone())
         },
         q: parsed.q.clone(),
         topics_filter: if parsed.topics.is_empty() {
@@ -340,6 +386,7 @@ fn ok_resp(
         items,
         topic_facets: Some(topic_facets),
         language_facets: Some(language_facets),
+        license_facets: Some(license_facets),
     }
 }
 
@@ -351,6 +398,11 @@ fn store_filter<'a>(parsed: &'a ParsedFilters) -> LeaderboardFilter<'a> {
             None
         } else {
             Some(parsed.languages.as_slice())
+        },
+        licenses: if parsed.licenses.is_empty() {
+            None
+        } else {
+            Some(parsed.licenses.as_slice())
         },
         topics: if parsed.topics.is_empty() {
             None
@@ -392,6 +444,7 @@ async fn top(
     let parsed = match parse_filters(
         params.language.as_deref(),
         params.languages.as_deref(),
+        params.licenses.as_deref(),
         params.topics.as_deref(),
         params.topic_mode.as_deref(),
         params.q.as_deref(),
@@ -463,6 +516,7 @@ async fn trending(
     let parsed = match parse_filters(
         params.language.as_deref(),
         params.languages.as_deref(),
+        params.licenses.as_deref(),
         params.topics.as_deref(),
         params.topic_mode.as_deref(),
         params.q.as_deref(),
@@ -821,7 +875,7 @@ mod tests {
 
     #[test]
     fn legacy_language_echoes_but_not_multi_filter() {
-        let p = parse_filters(Some("Rust"), None, None, None, None).unwrap();
+        let p = parse_filters(Some("Rust"), None, None, None, None, None).unwrap();
         assert_eq!(p.language.as_deref(), Some("Rust"));
         assert!(p.languages.is_empty(), "legacy must not bind multi-lang SQL");
         assert_eq!(p.languages_echo, vec!["Rust".to_string()]);

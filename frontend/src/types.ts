@@ -32,17 +32,24 @@ export interface LanguageFacet {
   count: number;
 }
 
+export interface LicenseFacet {
+  license: string;
+  count: number;
+}
+
 export interface LeaderboardResponse {
   date: string;
   board: string;
   language: string | null;
   languages_filter?: string[];
+  licenses_filter?: string[];
   q?: string | null;
   topics_filter?: string[];
   topic_mode?: string;
   items: LeaderboardItem[];
   topic_facets?: TopicFacet[];
   language_facets?: LanguageFacet[];
+  license_facets?: LicenseFacet[];
 }
 
 export interface MeResponse {

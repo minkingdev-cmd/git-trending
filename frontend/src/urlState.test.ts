@@ -80,11 +80,12 @@ describe("buildSearch", () => {
       topics: [],
       topicMode: "and",
       languages: [],
+      licenses: [],
     };
     expect(buildSearch(state)).toBe("?board=trending");
   });
 
-  it("writes q, topics, topic_mode, languages", () => {
+  it("writes q, topics, topic_mode, languages, licenses", () => {
     const s = buildSearch({
       board: "top",
       metric: "watchers",
@@ -93,6 +94,7 @@ describe("buildSearch", () => {
       topics: ["ai", "llm"],
       topicMode: "or",
       languages: ["Python", "TypeScript"],
+      licenses: ["MIT", "Apache-2.0"],
     });
     const params = new URLSearchParams(s.slice(1));
     expect(params.get("board")).toBe("top");
@@ -102,6 +104,7 @@ describe("buildSearch", () => {
     expect(params.get("topics")).toBe("ai,llm");
     expect(params.get("topic_mode")).toBe("or");
     expect(params.get("languages")).toBe("Python,TypeScript");
+    expect(params.get("licenses")).toBe("MIT,Apache-2.0");
   });
 
   it("round-trips with parseSearch", () => {
@@ -113,6 +116,7 @@ describe("buildSearch", () => {
       topics: ["rust", "tui"],
       topicMode: "or",
       languages: ["Rust"],
+      licenses: ["MIT"],
     };
     expect(parseSearch(buildSearch(original))).toEqual(original);
   });
@@ -126,6 +130,7 @@ describe("buildSearch", () => {
       topics: ["ai"],
       topicMode: "and",
       languages: ["Go"],
+      licenses: [],
     };
     expect(parseSearch(buildSearch(original))).toEqual(original);
   });
@@ -139,10 +144,21 @@ describe("toggleInList", () => {
 });
 
 describe("hasActiveFilters", () => {
-  it("detects q / topics / languages", () => {
-    expect(hasActiveFilters({ q: "", topics: [], languages: [] })).toBe(false);
-    expect(hasActiveFilters({ q: "x", topics: [], languages: [] })).toBe(true);
-    expect(hasActiveFilters({ q: "", topics: ["ai"], languages: [] })).toBe(true);
-    expect(hasActiveFilters({ q: "", topics: [], languages: ["Go"] })).toBe(true);
+  it("detects q / topics / languages / licenses", () => {
+    expect(
+      hasActiveFilters({ q: "", topics: [], languages: [], licenses: [] }),
+    ).toBe(false);
+    expect(
+      hasActiveFilters({ q: "x", topics: [], languages: [], licenses: [] }),
+    ).toBe(true);
+    expect(
+      hasActiveFilters({ q: "", topics: ["ai"], languages: [], licenses: [] }),
+    ).toBe(true);
+    expect(
+      hasActiveFilters({ q: "", topics: [], languages: ["Go"], licenses: [] }),
+    ).toBe(true);
+    expect(
+      hasActiveFilters({ q: "", topics: [], languages: [], licenses: ["MIT"] }),
+    ).toBe(true);
   });
 });

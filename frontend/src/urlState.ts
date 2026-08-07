@@ -10,6 +10,7 @@ export interface UrlState {
   topics: string[];
   topicMode: TopicMode;
   languages: string[];
+  licenses: string[];
 }
 
 export const DEFAULT_URL_STATE: UrlState = {
@@ -20,6 +21,7 @@ export const DEFAULT_URL_STATE: UrlState = {
   topics: [],
   topicMode: "and",
   languages: [],
+  licenses: [],
 };
 
 /** Parse comma-separated list; trim, drop empty; optionally lowercase; dedupe. */
@@ -84,6 +86,7 @@ export function parseSearch(search: string): UrlState {
     topics: parseCsvList(params.get("topics"), true),
     topicMode,
     languages,
+    licenses: parseCsvList(params.get("licenses"), false),
   };
 }
 
@@ -99,11 +102,19 @@ export function buildSearch(state: UrlState): string {
   if (state.topics.length) params.set("topics", toCsv(state.topics));
   if (state.topicMode !== "and") params.set("topic_mode", state.topicMode);
   if (state.languages.length) params.set("languages", toCsv(state.languages));
+  if (state.licenses.length) params.set("licenses", toCsv(state.licenses));
   const s = params.toString();
   return s ? `?${s}` : "?";
 }
 
-/** True when keyword / topics / languages filters are active. */
-export function hasActiveFilters(state: Pick<UrlState, "q" | "topics" | "languages">): boolean {
-  return Boolean(state.q.trim() || state.topics.length || state.languages.length);
+/** True when keyword / topics / languages / licenses filters are active. */
+export function hasActiveFilters(
+  state: Pick<UrlState, "q" | "topics" | "languages" | "licenses">,
+): boolean {
+  return Boolean(
+    state.q.trim() ||
+      state.topics.length ||
+      state.languages.length ||
+      state.licenses.length,
+  );
 }

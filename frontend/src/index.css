@@ -451,6 +451,21 @@ table.lb tbody tr:hover .row-actions {
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.01em;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.license-pill:hover {
+  border-color: var(--emerald-dim);
+  color: var(--link);
+}
+
+.license-pill.on-filter {
+  border-color: var(--emerald-dim);
+  background: var(--emerald-bg);
+  color: var(--link);
 }
 
 .topic-row {

@@ -11,8 +11,10 @@ interface Props {
   density: "compact" | "comfortable";
   selectedTopics: string[];
   selectedLanguages: string[];
+  selectedLicenses: string[];
   onToggleTopic?: (topic: string) => void;
   onToggleLanguage?: (lang: string) => void;
+  onToggleLicense?: (license: string) => void;
   onSelectRepo?: (fullName: string) => void;
 }
 
@@ -212,8 +214,10 @@ export default function LeaderboardTable({
   density,
   selectedTopics,
   selectedLanguages,
+  selectedLicenses,
   onToggleTopic,
   onToggleLanguage,
+  onToggleLicense,
   onSelectRepo,
 }: Props) {
   if (items.length === 0) {
@@ -316,9 +320,18 @@ export default function LeaderboardTable({
                 </td>
                 <td className="license-cell">
                   {item.license ? (
-                    <span className="license-pill" title={item.license}>
+                    <button
+                      type="button"
+                      className={`license-pill${selectedLicenses.includes(item.license) ? " on-filter" : ""}`}
+                      title={
+                        selectedLicenses.includes(item.license)
+                          ? `取消筛选 ${item.license}`
+                          : `按 License 筛选：${item.license}`
+                      }
+                      onClick={() => onToggleLicense?.(item.license!)}
+                    >
                       {item.license}
-                    </span>
+                    </button>
                   ) : (
                     <span className="lang-empty">—</span>
                   )}

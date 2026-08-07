@@ -128,6 +128,7 @@ struct TrackedListParams {
     pub q: Option<String>,
     pub topics: Option<String>,
     pub languages: Option<String>,
+    pub licenses: Option<String>,
     pub topic_mode: Option<String>,
     pub language: Option<String>,
 }
@@ -801,6 +802,7 @@ async fn list_tracked_api(
 ) -> impl IntoResponse {
     let topics = parse_csv(params.topics.as_deref(), true);
     let languages = parse_csv(params.languages.as_deref(), false);
+    let licenses = parse_csv(params.licenses.as_deref(), false);
     let language = params
         .language
         .as_deref()
@@ -833,6 +835,11 @@ async fn list_tracked_api(
             None
         } else {
             Some(languages.as_slice())
+        },
+        licenses: if licenses.is_empty() {
+            None
+        } else {
+            Some(licenses.as_slice())
         },
         topics: if topics.is_empty() {
             None

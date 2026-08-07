@@ -15,6 +15,12 @@ fn filter_langs(f: &LeaderboardFilter<'_>) -> Option<Vec<String>> {
         .map(|a| a.to_vec())
 }
 
+fn filter_licenses(f: &LeaderboardFilter<'_>) -> Option<Vec<String>> {
+    f.licenses
+        .filter(|a| !a.is_empty())
+        .map(|a| a.to_vec())
+}
+
 fn filter_topics(f: &LeaderboardFilter<'_>) -> Option<Vec<String>> {
     f.topics.filter(|a| !a.is_empty()).map(|a| a.to_vec())
 }
@@ -182,6 +188,7 @@ pub async fn top_by_stars(
     limit: i64,
 ) -> Result<Vec<LeaderboardRow>, sqlx::Error> {
     let langs = filter_langs(&filter);
+    let licenses = filter_licenses(&filter);
     let topics = filter_topics(&filter);
     let q = filter_q(&filter);
     sqlx::query_as!(
@@ -200,29 +207,32 @@ pub async fn top_by_stars(
                OR r.language_names && $3
                OR r.language = ANY($3)
              )
+             AND ($4::text[] IS NULL OR r.license = ANY($4))
              AND (
-               $4::text[] IS NULL
-               OR ($5 = 'and' AND r.topics @> $4)
-               OR ($5 = 'or' AND r.topics && $4)
+               $5::text[] IS NULL
+               OR ($6 = 'and' AND r.topics @> $5)
+               OR ($6 = 'or' AND r.topics && $5)
              )
              AND (
-               $6::text IS NULL
-               OR r.full_name ILIKE '%' || $6 || '%'
-               OR COALESCE(r.description, '') ILIKE '%' || $6 || '%'
+               $7::text IS NULL
+               OR r.full_name ILIKE '%' || $7 || '%'
+               OR COALESCE(r.description, '') ILIKE '%' || $7 || '%'
+               OR COALESCE(r.license, '') ILIKE '%' || $7 || '%'
                OR EXISTS (
                  SELECT 1 FROM unnest(r.topics) AS t(topic)
-                 WHERE t.topic ILIKE '%' || $6 || '%'
+                 WHERE t.topic ILIKE '%' || $7 || '%'
                )
                OR EXISTS (
                  SELECT 1 FROM unnest(r.language_names) AS ln(name)
-                 WHERE ln.name ILIKE '%' || $6 || '%'
+                 WHERE ln.name ILIKE '%' || $7 || '%'
                )
              )
            ORDER BY s.stars DESC
-           LIMIT $7"#,
+           LIMIT $8"#,
         date,
         filter.language,
         langs.as_deref(),
+        licenses.as_deref(),
         topics.as_deref(),
         filter.topic_mode.as_str(),
         q,
@@ -239,6 +249,7 @@ pub async fn top_by_forks(
     limit: i64,
 ) -> Result<Vec<LeaderboardRow>, sqlx::Error> {
     let langs = filter_langs(&filter);
+    let licenses = filter_licenses(&filter);
     let topics = filter_topics(&filter);
     let q = filter_q(&filter);
     sqlx::query_as!(
@@ -257,29 +268,32 @@ pub async fn top_by_forks(
                OR r.language_names && $3
                OR r.language = ANY($3)
              )
+             AND ($4::text[] IS NULL OR r.license = ANY($4))
              AND (
-               $4::text[] IS NULL
-               OR ($5 = 'and' AND r.topics @> $4)
-               OR ($5 = 'or' AND r.topics && $4)
+               $5::text[] IS NULL
+               OR ($6 = 'and' AND r.topics @> $5)
+               OR ($6 = 'or' AND r.topics && $5)
              )
              AND (
-               $6::text IS NULL
-               OR r.full_name ILIKE '%' || $6 || '%'
-               OR COALESCE(r.description, '') ILIKE '%' || $6 || '%'
+               $7::text IS NULL
+               OR r.full_name ILIKE '%' || $7 || '%'
+               OR COALESCE(r.description, '') ILIKE '%' || $7 || '%'
+               OR COALESCE(r.license, '') ILIKE '%' || $7 || '%'
                OR EXISTS (
                  SELECT 1 FROM unnest(r.topics) AS t(topic)
-                 WHERE t.topic ILIKE '%' || $6 || '%'
+                 WHERE t.topic ILIKE '%' || $7 || '%'
                )
                OR EXISTS (
                  SELECT 1 FROM unnest(r.language_names) AS ln(name)
-                 WHERE ln.name ILIKE '%' || $6 || '%'
+                 WHERE ln.name ILIKE '%' || $7 || '%'
                )
              )
            ORDER BY s.forks DESC
-           LIMIT $7"#,
+           LIMIT $8"#,
         date,
         filter.language,
         langs.as_deref(),
+        licenses.as_deref(),
         topics.as_deref(),
         filter.topic_mode.as_str(),
         q,
@@ -296,6 +310,7 @@ pub async fn top_by_watchers(
     limit: i64,
 ) -> Result<Vec<LeaderboardRow>, sqlx::Error> {
     let langs = filter_langs(&filter);
+    let licenses = filter_licenses(&filter);
     let topics = filter_topics(&filter);
     let q = filter_q(&filter);
     sqlx::query_as!(
@@ -314,29 +329,32 @@ pub async fn top_by_watchers(
                OR r.language_names && $3
                OR r.language = ANY($3)
              )
+             AND ($4::text[] IS NULL OR r.license = ANY($4))
              AND (
-               $4::text[] IS NULL
-               OR ($5 = 'and' AND r.topics @> $4)
-               OR ($5 = 'or' AND r.topics && $4)
+               $5::text[] IS NULL
+               OR ($6 = 'and' AND r.topics @> $5)
+               OR ($6 = 'or' AND r.topics && $5)
              )
              AND (
-               $6::text IS NULL
-               OR r.full_name ILIKE '%' || $6 || '%'
-               OR COALESCE(r.description, '') ILIKE '%' || $6 || '%'
+               $7::text IS NULL
+               OR r.full_name ILIKE '%' || $7 || '%'
+               OR COALESCE(r.description, '') ILIKE '%' || $7 || '%'
+               OR COALESCE(r.license, '') ILIKE '%' || $7 || '%'
                OR EXISTS (
                  SELECT 1 FROM unnest(r.topics) AS t(topic)
-                 WHERE t.topic ILIKE '%' || $6 || '%'
+                 WHERE t.topic ILIKE '%' || $7 || '%'
                )
                OR EXISTS (
                  SELECT 1 FROM unnest(r.language_names) AS ln(name)
-                 WHERE ln.name ILIKE '%' || $6 || '%'
+                 WHERE ln.name ILIKE '%' || $7 || '%'
                )
              )
            ORDER BY s.watchers DESC NULLS LAST
-           LIMIT $7"#,
+           LIMIT $8"#,
         date,
         filter.language,
         langs.as_deref(),
+        licenses.as_deref(),
         topics.as_deref(),
         filter.topic_mode.as_str(),
         q,
@@ -353,6 +371,7 @@ pub async fn trending(
     limit: i64,
 ) -> Result<Vec<LeaderboardRow>, sqlx::Error> {
     let langs = filter_langs(&filter);
+    let licenses = filter_licenses(&filter);
     let topics = filter_topics(&filter);
     let q = filter_q(&filter);
     sqlx::query_as!(
@@ -371,29 +390,32 @@ pub async fn trending(
                OR r.language_names && $3
                OR r.language = ANY($3)
              )
+             AND ($4::text[] IS NULL OR r.license = ANY($4))
              AND (
-               $4::text[] IS NULL
-               OR ($5 = 'and' AND r.topics @> $4)
-               OR ($5 = 'or' AND r.topics && $4)
+               $5::text[] IS NULL
+               OR ($6 = 'and' AND r.topics @> $5)
+               OR ($6 = 'or' AND r.topics && $5)
              )
              AND (
-               $6::text IS NULL
-               OR r.full_name ILIKE '%' || $6 || '%'
-               OR COALESCE(r.description, '') ILIKE '%' || $6 || '%'
+               $7::text IS NULL
+               OR r.full_name ILIKE '%' || $7 || '%'
+               OR COALESCE(r.description, '') ILIKE '%' || $7 || '%'
+               OR COALESCE(r.license, '') ILIKE '%' || $7 || '%'
                OR EXISTS (
                  SELECT 1 FROM unnest(r.topics) AS t(topic)
-                 WHERE t.topic ILIKE '%' || $6 || '%'
+                 WHERE t.topic ILIKE '%' || $7 || '%'
                )
                OR EXISTS (
                  SELECT 1 FROM unnest(r.language_names) AS ln(name)
-                 WHERE ln.name ILIKE '%' || $6 || '%'
+                 WHERE ln.name ILIKE '%' || $7 || '%'
                )
              )
            ORDER BY s.stars_today DESC NULLS LAST
-           LIMIT $7"#,
+           LIMIT $8"#,
         date,
         filter.language,
         langs.as_deref(),
+        licenses.as_deref(),
         topics.as_deref(),
         filter.topic_mode.as_str(),
         q,
@@ -595,6 +617,7 @@ pub async fn list_tracked(
     filter: LeaderboardFilter<'_>,
 ) -> Result<Vec<TrackedRow>, sqlx::Error> {
     let langs = filter_langs(&filter);
+    let licenses = filter_licenses(&filter);
     let topics = filter_topics(&filter);
     let q = filter_q(&filter);
     sqlx::query_as!(
@@ -630,28 +653,31 @@ pub async fn list_tracked(
                OR r.language_names && $3
                OR r.language = ANY($3)
              )
+             AND ($4::text[] IS NULL OR r.license = ANY($4))
              AND (
-               $4::text[] IS NULL
-               OR ($5 = 'and' AND r.topics @> $4)
-               OR ($5 = 'or' AND r.topics && $4)
+               $5::text[] IS NULL
+               OR ($6 = 'and' AND r.topics @> $5)
+               OR ($6 = 'or' AND r.topics && $5)
              )
              AND (
-               $6::text IS NULL
-               OR r.full_name ILIKE '%' || $6 || '%'
-               OR COALESCE(r.description, '') ILIKE '%' || $6 || '%'
+               $7::text IS NULL
+               OR r.full_name ILIKE '%' || $7 || '%'
+               OR COALESCE(r.description, '') ILIKE '%' || $7 || '%'
+               OR COALESCE(r.license, '') ILIKE '%' || $7 || '%'
                OR EXISTS (
                  SELECT 1 FROM unnest(r.topics) AS tp(topic)
-                 WHERE tp.topic ILIKE '%' || $6 || '%'
+                 WHERE tp.topic ILIKE '%' || $7 || '%'
                )
                OR EXISTS (
                  SELECT 1 FROM unnest(r.language_names) AS ln(name)
-                 WHERE ln.name ILIKE '%' || $6 || '%'
+                 WHERE ln.name ILIKE '%' || $7 || '%'
                )
              )
            ORDER BY t.created_at DESC"#,
         user_id,
         filter.language,
         langs.as_deref(),
+        licenses.as_deref(),
         topics.as_deref(),
         filter.topic_mode.as_str(),
         q

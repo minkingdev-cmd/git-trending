@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { LanguageFacet, TopicFacet } from "../types";
+import type { LanguageFacet, LicenseFacet, TopicFacet } from "../types";
 import { langColor } from "../langColors";
 import type { BoardKind, Metric, TopicMode } from "../urlState";
 
@@ -15,8 +15,10 @@ interface Props {
   topics: string[];
   topicMode: TopicMode;
   languages: string[];
+  licenses: string[];
   topicFacets: TopicFacet[];
   languageFacets: LanguageFacet[];
+  licenseFacets: LicenseFacet[];
   density: Density;
   showDesc: boolean;
   onBoard: (b: BoardKind) => void;
@@ -26,6 +28,7 @@ interface Props {
   onToggleTopic: (topic: string) => void;
   onTopicMode: (mode: TopicMode) => void;
   onToggleLanguage: (lang: string) => void;
+  onToggleLicense: (license: string) => void;
   onClearFilters: () => void;
   onDensity: (d: Density) => void;
   onShowDesc: (show: boolean) => void;
@@ -40,8 +43,10 @@ export default function Controls({
   topics,
   topicMode,
   languages,
+  licenses,
   topicFacets,
   languageFacets,
+  licenseFacets,
   density,
   showDesc,
   onBoard,
@@ -51,6 +56,7 @@ export default function Controls({
   onToggleTopic,
   onTopicMode,
   onToggleLanguage,
+  onToggleLicense,
   onClearFilters,
   onDensity,
   onShowDesc,
@@ -66,10 +72,13 @@ export default function Controls({
     return () => window.clearTimeout(t);
   }, [qDraft, q, onQ]);
 
-  const hasFilters = Boolean(q.trim() || topics.length || languages.length);
+  const hasFilters = Boolean(
+    q.trim() || topics.length || languages.length || licenses.length,
+  );
   // Facet chip rows collapse to a single line by default.
   const [langFacetsOpen, setLangFacetsOpen] = useState(false);
   const [topicFacetsOpen, setTopicFacetsOpen] = useState(false);
+  const [licenseFacetsOpen, setLicenseFacetsOpen] = useState(false);
 
   return (
     <section className="controls-panel" aria-label="筛选">
@@ -275,6 +284,44 @@ export default function Controls({
             aria-expanded={topicFacetsOpen}
           >
             {topicFacetsOpen ? "收起" : "展开"}
+          </button>
+        )}
+      </div>
+
+      <div
+        className={`facet-row${licenseFacetsOpen ? " is-expanded" : ""}`}
+      >
+        <span className="facet-label">许可</span>
+        <div className="facet-chips-wrap">
+          <div className="chips" aria-label="License 多选（OR）">
+            {licenseFacets.length === 0 ? (
+              <span className="facet-empty">—</span>
+            ) : (
+              licenseFacets.map(({ license, count }) => {
+                const active = licenses.includes(license);
+                return (
+                  <button
+                    key={license}
+                    type="button"
+                    className={`chip${active ? " active" : ""}`}
+                    onClick={() => onToggleLicense(license)}
+                  >
+                    {license}
+                    <span className="count">{count}</span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+        {licenseFacets.length > 0 && (
+          <button
+            type="button"
+            className="facet-toggle"
+            onClick={() => setLicenseFacetsOpen((v) => !v)}
+            aria-expanded={licenseFacetsOpen}
+          >
+            {licenseFacetsOpen ? "收起" : "展开"}
           </button>
         )}
       </div>

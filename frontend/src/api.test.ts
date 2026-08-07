@@ -169,6 +169,7 @@ describe("track helpers", () => {
       q: "cli",
       topics: ["ai", "llm"],
       languages: ["Rust"],
+      licenses: ["MIT"],
       topicMode: "or",
     });
     const url = String(fetchMock.mock.calls[0][0]);
@@ -176,6 +177,7 @@ describe("track helpers", () => {
     expect(url).toContain("q=cli");
     expect(url).toContain("topics=ai%2Cllm");
     expect(url).toContain("languages=Rust");
+    expect(url).toContain("licenses=MIT");
     expect(url).toContain("topic_mode=or");
   });
 
