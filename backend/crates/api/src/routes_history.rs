@@ -200,6 +200,7 @@ mod tests {
                     html_url: "https://github.com/hist/repo".into(),
                     language: Some("Rust".into()),
                     description: None,
+                    license: None,
                     topics: vec![],
                     languages_json: RepoInput::languages_empty(),
                     language_names: vec![],

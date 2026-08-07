@@ -224,6 +224,7 @@ export default function LeaderboardTable({
             <th style={{ width: 44 }}>#</th>
             <th>Repo</th>
             <th style={{ width: 200 }}>Languages</th>
+            <th style={{ width: 100 }}>License</th>
             <th className="num" style={{ width: 100 }}>
               {primaryHeader(board, metric)}
             </th>
@@ -298,6 +299,15 @@ export default function LeaderboardTable({
                     selectedLanguages={selectedLanguages}
                     onToggleLanguage={onToggleLanguage}
                   />
+                </td>
+                <td className="license-cell">
+                  {item.license ? (
+                    <span className="license-pill" title={item.license}>
+                      {item.license}
+                    </span>
+                  ) : (
+                    <span className="lang-empty">—</span>
+                  )}
                 </td>
                 <td className="num metric-primary">
                   {board === "trending" ? (

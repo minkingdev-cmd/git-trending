@@ -145,8 +145,9 @@ export default function TrackedPanel({
                   )}
                 </div>
                 <div className="tr-meta">
-                  {compact(item.stars)} ★ · {compact(item.forks)} ⑂ · 添加于{" "}
-                  {formatAddedAt(item.added_at)}
+                  {compact(item.stars)} ★ · {compact(item.forks)} ⑂
+                  {item.license ? ` · ${item.license}` : ""}
+                  {" · "}添加于 {formatAddedAt(item.added_at)}
                 </div>
                 <div className="tr-status">{statusHint(st)}</div>
                 <div className="tr-actions">

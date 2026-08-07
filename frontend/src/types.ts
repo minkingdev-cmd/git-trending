@@ -11,6 +11,8 @@ export interface LeaderboardItem {
   description: string | null;
   /** Deprecated primary language; prefer `languages`. */
   language: string | null;
+  /** SPDX id or short key (MIT, Apache-2.0, …). */
+  license: string | null;
   topics: string[];
   languages: LanguageShare[];
   stars: number;
@@ -97,6 +99,7 @@ export interface TrackedRepoItem {
   full_name: string;
   html_url: string;
   description: string | null;
+  license?: string | null;
   languages: LanguageShare[];
   topics: string[];
   stars: number;
@@ -114,6 +117,7 @@ export interface LookupResponse {
   full_name: string;
   html_url: string;
   description: string | null;
+  license?: string | null;
   languages: LanguageShare[];
   topics: string[];
   stars: number;

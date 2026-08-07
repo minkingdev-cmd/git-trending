@@ -21,6 +21,8 @@ pub struct SearchRepo {
     pub html_url: String,
     pub description: Option<String>,
     pub language: Option<String>,
+    /// SPDX id / short key from Search API `license` object.
+    pub license: Option<String>,
     pub stars: i32,
     pub forks: i32,
     /// Raw topics from Search API (normalized at store/enrich time).
@@ -38,10 +40,35 @@ struct SearchItem {
     html_url: String,
     description: Option<String>,
     language: Option<String>,
+    license: Option<LicenseJson>,
     stargazers_count: i32,
     forks_count: i32,
     #[serde(default)]
     topics: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct LicenseJson {
+    spdx_id: Option<String>,
+    key: Option<String>,
+    name: Option<String>,
+}
+
+/// Prefer SPDX id; skip NOASSERTION / empty.
+pub fn license_from_gh(
+    spdx_id: Option<String>,
+    key: Option<String>,
+    name: Option<String>,
+) -> Option<String> {
+    for cand in [spdx_id, key, name] {
+        if let Some(s) = cand {
+            let t = s.trim();
+            if !t.is_empty() && !t.eq_ignore_ascii_case("NOASSERTION") && t != "other" {
+                return Some(t.to_string());
+            }
+        }
+    }
+    None
 }
 
 pub async fn search_top(
@@ -77,14 +104,18 @@ pub async fn search_top(
         if resp.items.is_empty() {
             break;
         }
-        out.extend(resp.items.into_iter().map(|it| SearchRepo {
-            full_name: it.full_name,
-            html_url: it.html_url,
-            description: it.description,
-            language: it.language,
-            stars: it.stargazers_count,
-            forks: it.forks_count,
-            topics: it.topics,
+        out.extend(resp.items.into_iter().map(|it| {
+            let license = it.license.and_then(|l| license_from_gh(l.spdx_id, l.key, l.name));
+            SearchRepo {
+                full_name: it.full_name,
+                html_url: it.html_url,
+                description: it.description,
+                language: it.language,
+                license,
+                stars: it.stargazers_count,
+                forks: it.forks_count,
+                topics: it.topics,
+            }
         }));
     }
     Ok(out)

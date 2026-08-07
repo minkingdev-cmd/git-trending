@@ -137,6 +137,7 @@ pub struct TrackedRepoItem {
     pub full_name: String,
     pub html_url: String,
     pub description: Option<String>,
+    pub license: Option<String>,
     pub languages: Vec<LanguageShareDto>,
     pub topics: Vec<String>,
     pub stars: i32,
@@ -151,6 +152,7 @@ struct LookupResp {
     full_name: String,
     html_url: String,
     description: Option<String>,
+    license: Option<String>,
     languages: Vec<LanguageShareDto>,
     topics: Vec<String>,
     stars: i32,
@@ -172,6 +174,7 @@ struct GhRepo {
     html_url: String,
     description: Option<String>,
     language: Option<String>,
+    license: Option<String>,
     topics: Vec<String>,
     stars: i32,
     forks: i32,
@@ -186,6 +189,7 @@ struct GhRepoJson {
     html_url: String,
     description: Option<String>,
     language: Option<String>,
+    license: Option<GhLicenseJson>,
     #[serde(default)]
     topics: Vec<String>,
     #[serde(default)]
@@ -195,6 +199,13 @@ struct GhRepoJson {
     #[serde(default)]
     subscribers_count: Option<i32>,
     owner: Option<GhOwner>,
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GhLicenseJson {
+    spdx_id: Option<String>,
+    key: Option<String>,
     name: Option<String>,
 }
 
@@ -300,6 +311,18 @@ async fn fetch_github_repo(
         format!("{owner_login}/{repo_name}")
     };
 
+    let license = meta.license.and_then(|l| {
+        for cand in [l.spdx_id, l.key, l.name] {
+            if let Some(s) = cand {
+                let t = s.trim();
+                if !t.is_empty() && !t.eq_ignore_ascii_case("NOASSERTION") && t != "other" {
+                    return Some(t.to_string());
+                }
+            }
+        }
+        None
+    });
+
     Ok(GhRepo {
         full_name,
         owner: owner_login,
@@ -307,6 +330,7 @@ async fn fetch_github_repo(
         html_url: meta.html_url,
         description: meta.description,
         language: meta.language,
+        license,
         topics: normalize_topics(&meta.topics),
         stars: meta.stargazers_count,
         forks: meta.forks_count,
@@ -486,6 +510,7 @@ fn gh_to_item(
         full_name: gh.full_name.clone(),
         html_url: gh.html_url.clone(),
         description: gh.description.clone(),
+        license: gh.license.clone(),
         languages: gh
             .languages
             .iter()
@@ -509,6 +534,7 @@ fn tracked_row_to_item(
         full_name: row.full_name,
         html_url: row.html_url,
         description: row.description,
+        license: row.license,
         languages: languages_from_json(&row.languages),
         topics: row.topics,
         stars: row.stars.unwrap_or(0),
@@ -576,6 +602,7 @@ async fn lookup(
         full_name: gh.full_name,
         html_url: gh.html_url,
         description: gh.description,
+        license: gh.license,
         languages: gh
             .languages
             .into_iter()
@@ -665,6 +692,7 @@ async fn track(
             gh.language_names.first().cloned()
         }),
         description: gh.description.clone(),
+        license: gh.license.clone(),
         topics: gh.topics.clone(),
         languages_json,
         language_names: gh.language_names.clone(),
@@ -1129,6 +1157,7 @@ mod tests {
                     html_url: format!("https://github.com/{name}"),
                     language: None,
                     description: None,
+                    license: None,
                     topics: vec![],
                     languages_json: RepoInput::languages_empty(),
                     language_names: vec![],
@@ -1348,6 +1377,7 @@ mod tests {
                 html_url: "https://github.com/pub/boarded".into(),
                 language: Some("Rust".into()),
                 description: Some("x".into()),
+                license: Some("MIT".into()),
                 topics: vec!["ai".into()],
                 languages_json: serde_json::json!([{"name":"Rust","pct":100.0}]),
                 language_names: vec!["Rust".into()],

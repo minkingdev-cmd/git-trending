@@ -77,6 +77,8 @@ pub struct LeaderboardItem {
     pub description: Option<String>,
     /// Deprecated primary language; prefer `languages`.
     pub language: Option<String>,
+    /// SPDX id or short license key (MIT, Apache-2.0, …).
+    pub license: Option<String>,
     pub topics: Vec<String>,
     pub languages: Vec<LanguageShareDto>,
     pub stars: i32,
@@ -238,6 +240,7 @@ fn to_items(
                 html_url: r.html_url,
                 description: r.description,
                 language: r.language,
+                license: r.license,
                 topics: r.topics,
                 languages,
                 stars: r.stars,
@@ -684,6 +687,7 @@ mod tests {
             html_url: format!("https://github.com/{full_name}"),
             language: lang.map(String::from),
             description: None,
+            license: None,
             topics: vec![],
             languages_json: RepoInput::languages_empty(),
             language_names: vec![],
@@ -705,6 +709,7 @@ mod tests {
             html_url: format!("https://github.com/{full_name}"),
             language: lang.map(String::from),
             description: Some(format!("desc for {full_name}")),
+            license: None,
             topics: topics.iter().map(|t| t.to_string()).collect(),
             languages_json: languages,
             language_names: language_names.iter().map(|s| s.to_string()).collect(),

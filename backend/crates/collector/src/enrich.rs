@@ -77,6 +77,7 @@ pub struct RepoDetails {
     pub html_url: String,
     pub description: Option<String>,
     pub language: Option<String>,
+    pub license: Option<String>,
     pub topics: Vec<String>,
     pub stars: i32,
     pub forks: i32,
@@ -90,6 +91,7 @@ struct RepoMetaJson {
     html_url: String,
     description: Option<String>,
     language: Option<String>,
+    license: Option<LicenseJson>,
     #[serde(default)]
     topics: Vec<String>,
     #[serde(default)]
@@ -99,6 +101,13 @@ struct RepoMetaJson {
     #[serde(default)]
     subscribers_count: Option<i32>,
     owner: Option<RepoOwnerJson>,
+    name: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct LicenseJson {
+    spdx_id: Option<String>,
+    key: Option<String>,
     name: Option<String>,
 }
 
@@ -136,6 +145,9 @@ pub async fn fetch_repo_details(
     } else {
         format!("{owner_login}/{repo_name}")
     };
+    let license = meta
+        .license
+        .and_then(|l| crate::search::license_from_gh(l.spdx_id, l.key, l.name));
     Ok(RepoDetails {
         full_name,
         owner: owner_login,
@@ -143,6 +155,7 @@ pub async fn fetch_repo_details(
         html_url: meta.html_url,
         description: meta.description,
         language: meta.language,
+        license,
         topics: normalize_topics(&meta.topics),
         stars: meta.stargazers_count,
         forks: meta.forks_count,

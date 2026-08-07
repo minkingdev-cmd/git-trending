@@ -114,6 +114,8 @@ pub struct RepoInput {
     pub html_url: String,
     pub language: Option<String>,
     pub description: Option<String>,
+    /// SPDX id or short key (e.g. MIT, Apache-2.0); None if unknown.
+    pub license: Option<String>,
     pub topics: Vec<String>,
     /// JSON array of language shares (name/pct/bytes); stored in `repos.languages`.
     pub languages_json: serde_json::Value,
@@ -141,6 +143,7 @@ pub struct LeaderboardRow {
     pub html_url: String,
     pub description: Option<String>,
     pub language: Option<String>,
+    pub license: Option<String>,
     pub topics: Vec<String>,
     pub languages: serde_json::Value,
     pub stars: i32,
@@ -160,6 +163,7 @@ pub struct TrackedRow {
     pub html_url: String,
     pub description: Option<String>,
     pub language: Option<String>,
+    pub license: Option<String>,
     pub topics: Vec<String>,
     pub languages: serde_json::Value,
     /// Prefer latest `tracked_daily` snapshot, else any board latest; None if none.

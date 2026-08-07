@@ -11,6 +11,7 @@ pub struct TopEntry {
     pub html_url: String,
     pub description: Option<String>,
     pub language: Option<String>,
+    pub license: Option<String>,
     pub stars: i32,
     pub forks: i32,
     pub watchers: Option<i32>,
@@ -42,6 +43,7 @@ async fn store_one(
     html_url: &str,
     description: &Option<String>,
     language: &Option<String>,
+    license: &Option<String>,
     topics: &[String],
     snap: SnapshotInput,
 ) -> anyhow::Result<()> {
@@ -53,6 +55,7 @@ async fn store_one(
         html_url: html_url.to_string(),
         language: language.clone(),
         description: description.clone(),
+        license: license.clone(),
         // Empty languages here: core upsert preserves existing; enrich phase fills later.
         topics: enrich::normalize_topics(topics),
         languages_json: RepoInput::languages_empty(),
@@ -74,6 +77,7 @@ pub async fn store_top_rows(pool: &PgPool, date: NaiveDate, board: Board, rows: 
             &r.html_url,
             &r.description,
             &r.language,
+            &r.license,
             &r.topics,
             SnapshotInput {
                 stars: r.stars,
@@ -91,6 +95,7 @@ pub async fn store_top_rows(pool: &PgPool, date: NaiveDate, board: Board, rows: 
 pub async fn store_trending_rows(pool: &PgPool, date: NaiveDate, rows: &[crate::trending::TrendingRepo]) -> anyhow::Result<usize> {
     let mut n = 0;
     for t in rows {
+        let no_license = None;
         store_one(
             pool,
             date,
@@ -99,6 +104,7 @@ pub async fn store_trending_rows(pool: &PgPool, date: NaiveDate, rows: &[crate::
             &format!("https://github.com/{}", t.full_name),
             &t.description,
             &t.language,
+            &no_license,
             &[],
             SnapshotInput {
                 stars: t.stars,
@@ -169,6 +175,7 @@ pub async fn apply_enrichment(
         html_url: need.html_url.clone(),
         language: need.language.clone(),
         description: need.description.clone(),
+        license: None, // preserve existing via COALESCE on upsert
         topics,
         languages_json,
         language_names,

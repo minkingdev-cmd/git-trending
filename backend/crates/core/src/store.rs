@@ -29,14 +29,14 @@ pub async fn upsert_repo(pool: &PgPool, r: &RepoInput, today: NaiveDate) -> Resu
     // Non-empty values overwrite so a successful enrich refresh wins.
     sqlx::query_scalar!(
         r#"INSERT INTO repos (
-               full_name, owner, name, html_url, language, description, first_seen,
+               full_name, owner, name, html_url, language, description, license, first_seen,
                topics, languages, language_names, last_enriched_at
            )
            VALUES (
-               $1, $2, $3, $4, $5, $6, $7,
-               $8, $9, $10,
+               $1, $2, $3, $4, $5, $6, $7, $8,
+               $9, $10, $11,
                CASE
-                 WHEN cardinality($8::text[]) > 0 OR cardinality($10::text[]) > 0
+                 WHEN cardinality($9::text[]) > 0 OR cardinality($11::text[]) > 0
                  THEN now()
                  ELSE NULL
                END
@@ -45,6 +45,7 @@ pub async fn upsert_repo(pool: &PgPool, r: &RepoInput, today: NaiveDate) -> Resu
            SET html_url = EXCLUDED.html_url,
                language = EXCLUDED.language,
                description = EXCLUDED.description,
+               license = COALESCE(EXCLUDED.license, repos.license),
                topics = CASE
                  WHEN cardinality(EXCLUDED.topics) > 0 THEN EXCLUDED.topics
                  ELSE repos.topics
@@ -70,6 +71,7 @@ pub async fn upsert_repo(pool: &PgPool, r: &RepoInput, today: NaiveDate) -> Resu
         r.html_url,
         r.language,
         r.description,
+        r.license,
         today,
         &r.topics as &[String],
         r.languages_json.clone(),
@@ -163,6 +165,7 @@ pub fn tracked_row_to_leaderboard(t: TrackedRow) -> LeaderboardRow {
         html_url: t.html_url,
         description: t.description,
         language: t.language,
+        license: t.license,
         topics: t.topics,
         languages: t.languages,
         stars: t.stars.unwrap_or(0),
@@ -186,6 +189,7 @@ pub async fn top_by_stars(
         r#"SELECT ROW_NUMBER() OVER (ORDER BY s.stars DESC) AS "rank!",
                   r.full_name AS full_name, r.html_url AS html_url,
                   r.description AS description, r.language AS language,
+                  r.license AS license,
                   r.topics AS "topics!", r.languages AS "languages!",
                   s.stars AS stars, s.forks AS forks, s.watchers AS watchers, s.stars_today AS stars_today
            FROM snapshots s JOIN repos r ON r.id = s.repo_id
@@ -242,6 +246,7 @@ pub async fn top_by_forks(
         r#"SELECT ROW_NUMBER() OVER (ORDER BY s.forks DESC) AS "rank!",
                   r.full_name AS full_name, r.html_url AS html_url,
                   r.description AS description, r.language AS language,
+                  r.license AS license,
                   r.topics AS "topics!", r.languages AS "languages!",
                   s.stars AS stars, s.forks AS forks, s.watchers AS watchers, s.stars_today AS stars_today
            FROM snapshots s JOIN repos r ON r.id = s.repo_id
@@ -298,6 +303,7 @@ pub async fn top_by_watchers(
         r#"SELECT ROW_NUMBER() OVER (ORDER BY s.watchers DESC NULLS LAST) AS "rank!",
                   r.full_name AS full_name, r.html_url AS html_url,
                   r.description AS description, r.language AS language,
+                  r.license AS license,
                   r.topics AS "topics!", r.languages AS "languages!",
                   s.stars AS stars, s.forks AS forks, s.watchers AS watchers, s.stars_today AS stars_today
            FROM snapshots s JOIN repos r ON r.id = s.repo_id
@@ -354,6 +360,7 @@ pub async fn trending(
         r#"SELECT ROW_NUMBER() OVER (ORDER BY s.stars_today DESC NULLS LAST) AS "rank!",
                   r.full_name AS full_name, r.html_url AS html_url,
                   r.description AS description, r.language AS language,
+                  r.license AS license,
                   r.topics AS "topics!", r.languages AS "languages!",
                   s.stars AS stars, s.forks AS forks, s.watchers AS watchers, s.stars_today AS stars_today
            FROM snapshots s JOIN repos r ON r.id = s.repo_id
@@ -597,6 +604,7 @@ pub async fn list_tracked(
                   r.html_url AS "html_url!",
                   r.description,
                   r.language,
+                  r.license,
                   r.topics AS "topics!",
                   r.languages AS "languages!",
                   s.stars AS "stars?",
@@ -680,6 +688,7 @@ mod tests {
             html_url: format!("https://github.com/{full_name}"),
             language: lang.map(String::from),
             description: Some(format!("desc of {full_name}")),
+            license: None,
             topics: vec![],
             languages_json: RepoInput::languages_empty(),
             language_names: vec![],

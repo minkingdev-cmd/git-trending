@@ -12,6 +12,7 @@ const item: LeaderboardItem = {
   html_url: "https://github.com/owner/repo",
   description: "desc",
   language: "TypeScript",
+  license: "MIT",
   topics: ["typescript", "web"],
   languages: [
     { name: "TypeScript", pct: 80 },
