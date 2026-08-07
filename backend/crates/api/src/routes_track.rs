@@ -629,6 +629,31 @@ async fn track(
         }
     };
 
+    // Gate limit / side effects BEFORE any writes so 409 leaves DB unchanged.
+    // (Re-track of an already-tracked repo may still refresh meta/snapshot below.)
+    let already =
+        match is_tracked_full_name(&state.pool, claims.sub, &gh.full_name).await {
+            Ok(v) => v,
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
+
+    if !already {
+        let count = match store::count_tracked(&state.pool, claims.sub).await {
+            Ok(c) => c,
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
+        if count >= TRACKED_REPO_LIMIT {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": "tracked repo limit reached",
+                    "limit": TRACKED_REPO_LIMIT
+                })),
+            )
+                .into_response();
+        }
+    }
+
     let today = Utc::now().date_naive();
     let languages_json = serde_json::to_value(&gh.languages).unwrap_or_else(|_| serde_json::json!([]));
     let repo_input = RepoInput {
@@ -672,26 +697,7 @@ async fn track(
         // non-fatal: tracking still proceeds
     }
 
-    let already = match store::is_tracked(&state.pool, claims.sub, repo_id).await {
-        Ok(v) => v,
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    };
-
     if !already {
-        let count = match store::count_tracked(&state.pool, claims.sub).await {
-            Ok(c) => c,
-            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-        };
-        if count >= TRACKED_REPO_LIMIT {
-            return (
-                StatusCode::CONFLICT,
-                Json(serde_json::json!({
-                    "error": "tracked repo limit reached",
-                    "limit": TRACKED_REPO_LIMIT
-                })),
-            )
-                .into_response();
-        }
         if let Err(e) = store::track_repo(&state.pool, claims.sub, repo_id).await {
             tracing::error!(error = %e, "track_repo");
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -831,7 +837,7 @@ mod tests {
     use crate::state::AppState;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
-    use ght_core::models::{Board, RepoInput, SnapshotInput};
+    use ght_core::models::{Board, LeaderboardFilter, RepoInput, SnapshotInput};
     use ght_core::{db, store};
     use serial_test::serial;
     use tower::ServiceExt;
@@ -1144,6 +1150,44 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::CONFLICT, "body={body}");
+
+        // 409 must not mutate: no extra track row, overflow not listed, no snapshot.
+        assert_eq!(
+            store::count_tracked(&state.pool, 9).await.unwrap(),
+            TRACKED_REPO_LIMIT as i64
+        );
+        let listed = store::list_tracked(&state.pool, 9, LeaderboardFilter::empty())
+            .await
+            .unwrap();
+        assert!(
+            listed.iter().all(|r| r.full_name != "overflow/one"),
+            "overflow/one must not appear in tracked list after 409"
+        );
+        let snap_cnt: (i64,) = sqlx::query_as(
+            r#"SELECT COUNT(*)::bigint
+               FROM snapshots s
+               JOIN repos r ON r.id = s.repo_id
+               WHERE r.full_name = $1 AND s.board = 'tracked_daily'"#,
+        )
+        .bind("overflow/one")
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            snap_cnt.0, 0,
+            "409 must not write tracked_daily snapshot for overflow repo"
+        );
+        let repo_cnt: (i64,) = sqlx::query_as(
+            r#"SELECT COUNT(*)::bigint FROM repos WHERE full_name = $1"#,
+        )
+        .bind("overflow/one")
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            repo_cnt.0, 0,
+            "409 must not upsert repos row for overflow repo"
+        );
     }
 
     #[tokio::test]
