@@ -738,6 +738,27 @@ pub async fn list_all_tracked_full_names(pool: &PgPool) -> Result<Vec<String>, s
     Ok(rows.into_iter().map(|r| r.full_name).collect())
 }
 
+/// Which of `full_names` already exist in `repos` (for discover `in_local_index`).
+///
+/// Empty input → empty set (no query).
+pub async fn repos_exist_full_names(
+    pool: &PgPool,
+    full_names: &[String],
+) -> Result<std::collections::HashSet<String>, sqlx::Error> {
+    if full_names.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+    let rows = sqlx::query!(
+        r#"SELECT full_name AS "full_name!"
+           FROM repos
+           WHERE full_name = ANY($1)"#,
+        full_names
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| r.full_name).collect())
+}
+
 /// List repos tracked by one user, with optional q / topics / languages filter.
 /// Metrics prefer latest `tracked_daily` snapshot, else any board's latest snapshot.
 pub async fn list_tracked(
@@ -1878,6 +1899,33 @@ mod tests {
             .filter(|n| n.starts_with("trackall/"))
             .collect();
         assert_eq!(mine, vec!["trackall/only1".to_string(), "trackall/shared".to_string()]);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn repos_exist_full_names_batch() {
+        let pool = test_pool().await;
+        let date = NaiveDate::from_ymd_opt(2026, 8, 7).unwrap();
+        upsert_repo(&pool, &repo("existbatch/a", None), date)
+            .await
+            .unwrap();
+        upsert_repo(&pool, &repo("existbatch/b", None), date)
+            .await
+            .unwrap();
+
+        let empty = repos_exist_full_names(&pool, &[]).await.unwrap();
+        assert!(empty.is_empty());
+
+        let names = vec![
+            "existbatch/a".to_string(),
+            "existbatch/missing".to_string(),
+            "existbatch/b".to_string(),
+        ];
+        let found = repos_exist_full_names(&pool, &names).await.unwrap();
+        assert_eq!(found.len(), 2);
+        assert!(found.contains("existbatch/a"));
+        assert!(found.contains("existbatch/b"));
+        assert!(!found.contains("existbatch/missing"));
     }
 
     #[tokio::test]

@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod rate_limit;
 pub mod routes_admin;
+pub mod routes_discover;
 pub mod routes_history;
 pub mod routes_leaderboard;
 pub mod routes_me_github;
@@ -17,6 +18,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(routes_history::router())
         .merge(routes_track::router())
         .merge(routes_me_github::router())
+        .merge(routes_discover::router())
         .merge(routes_admin::router())
         .with_state(state)
 }
