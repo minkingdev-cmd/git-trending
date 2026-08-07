@@ -1,0 +1,68 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT topics AS \"topics!\", language_names AS \"language_names!\",\n                      languages AS \"languages!\", last_enriched_at,\n                      pushed_at, archived AS \"archived!\", open_issues_count,\n                      created_at_gh, latest_release_at\n               FROM repos WHERE full_name = 'a/top'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "topics!",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 1,
+        "name": "language_names!",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 2,
+        "name": "languages!",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 3,
+        "name": "last_enriched_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 4,
+        "name": "pushed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "archived!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "open_issues_count",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at_gh",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "latest_release_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "4c8a7ec6db1fc2c0e35284031624b367c94a5ad9d3d7c531b178c75ad618f654"
+}

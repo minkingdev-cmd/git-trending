@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT topics AS \"topics!\", language_names AS \"language_names!\"\n               FROM repos WHERE full_name = 'wipe/test'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "topics!",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 1,
+        "name": "language_names!",
+        "type_info": "TextArray"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "51070bb2b0bfbdc37cfc844bb3d8c0aab4c6a21f4e4765dfb292bdeaa1b0abfb"
+}

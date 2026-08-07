@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.stars, s.forks, s.watchers, s.board AS \"board!\"\n               FROM snapshots s\n               JOIN repos r ON r.id = s.repo_id\n               WHERE r.full_name = 'tracked/only' AND s.snapshot_date = $1\n               ORDER BY s.board",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "stars",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "forks",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "watchers",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "board!",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Date"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "3552852b4d1e896ed9e9e4dc3819ccf68b25f9c40482deb0eb5cefd23e7f6bf2"
+}
