@@ -1,6 +1,7 @@
-export type BoardKind = "trending" | "top" | "tracked";
+export type BoardKind = "trending" | "top" | "tracked" | "discover";
 export type Metric = "stars" | "forks" | "watchers";
 export type TopicMode = "and" | "or";
+export type DiscoverSort = "stars" | "updated";
 
 export interface UrlState {
   board: BoardKind;
@@ -15,6 +16,17 @@ export interface UrlState {
   excludeArchived: boolean;
   /** Optional day window for pushed_at; null = no filter. URL: active_within=N. */
   activeWithin: number | null;
+  // --- Discover namespace (d* params; only written when board=discover) ---
+  dq: string;
+  dlanguage: string;
+  dlicense: string;
+  dminStars: number | null;
+  /** Default true. URL: omit or 1; pass dexclude_archived=0 to disable. */
+  dexcludeArchived: boolean;
+  dactiveWithin: number | null;
+  dsort: DiscoverSort;
+  /** 1-based page; default 1. */
+  dpage: number;
 }
 
 export const DEFAULT_URL_STATE: UrlState = {
@@ -28,6 +40,14 @@ export const DEFAULT_URL_STATE: UrlState = {
   licenses: [],
   excludeArchived: true,
   activeWithin: null,
+  dq: "",
+  dlanguage: "",
+  dlicense: "",
+  dminStars: null,
+  dexcludeArchived: true,
+  dactiveWithin: null,
+  dsort: "stars",
+  dpage: 1,
 };
 
 /** Parse exclude_archived: missing/empty/1/true → true; 0/false/no → false. */
@@ -46,6 +66,27 @@ export function parseActiveWithin(raw: string | null): number | null {
   if (!s) return null;
   const n = Number.parseInt(s, 10);
   if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
+
+/** Parse non-negative integer (for min_stars); invalid → null. */
+export function parseNonNegInt(raw: string | null): number | null {
+  if (raw == null) return null;
+  const s = raw.trim();
+  if (!s) return null;
+  const n = Number.parseInt(s, 10);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n;
+}
+
+/** Parse discover page 1..=10; missing/invalid → 1. */
+export function parseDiscoverPage(raw: string | null): number {
+  if (raw == null) return 1;
+  const s = raw.trim();
+  if (!s) return 1;
+  const n = Number.parseInt(s, 10);
+  if (!Number.isFinite(n) || n < 1) return 1;
+  if (n > 10) return 10;
   return n;
 }
 
@@ -79,8 +120,28 @@ export function toggleInList(list: string[], value: string): string[] {
 }
 
 /**
+ * True when discover has at least one search condition
+ * (exclude_archived alone does not count — matches API).
+ */
+export function hasDiscoverCondition(
+  state: Pick<
+    UrlState,
+    "dq" | "dlanguage" | "dlicense" | "dminStars" | "dactiveWithin"
+  >,
+): boolean {
+  return Boolean(
+    state.dq.trim() ||
+      state.dlanguage.trim() ||
+      state.dlicense.trim() ||
+      (state.dminStars != null && state.dminStars >= 0) ||
+      (state.dactiveWithin != null && state.dactiveWithin > 0),
+  );
+}
+
+/**
  * Parse `window.location.search` (or any search string, with or without `?`).
  * Accepts legacy `lang` as a single-language filter when `languages` is absent.
+ * Discover `d*` params are always read; they are only written when board=discover.
  */
 export function parseSearch(search: string): UrlState {
   const raw = search.startsWith("?") ? search.slice(1) : search;
@@ -88,7 +149,9 @@ export function parseSearch(search: string): UrlState {
 
   const boardRaw = params.get("board");
   const board: BoardKind =
-    boardRaw === "top" || boardRaw === "tracked" ? boardRaw : "trending";
+    boardRaw === "top" || boardRaw === "tracked" || boardRaw === "discover"
+      ? boardRaw
+      : "trending";
   const metricRaw = params.get("metric");
   const metric: Metric =
     metricRaw === "forks" || metricRaw === "watchers" ? metricRaw : "stars";
@@ -103,6 +166,9 @@ export function parseSearch(search: string): UrlState {
   const topicModeRaw = params.get("topic_mode")?.trim().toLowerCase();
   const topicMode: TopicMode = topicModeRaw === "or" ? "or" : "and";
 
+  const dsortRaw = params.get("dsort")?.trim().toLowerCase();
+  const dsort: DiscoverSort = dsortRaw === "updated" ? "updated" : "stars";
+
   return {
     board,
     metric,
@@ -114,10 +180,18 @@ export function parseSearch(search: string): UrlState {
     licenses: parseCsvList(params.get("licenses"), false),
     excludeArchived: parseExcludeArchived(params.get("exclude_archived")),
     activeWithin: parseActiveWithin(params.get("active_within")),
+    dq: params.get("dq") ?? "",
+    dlanguage: params.get("dlanguage") ?? "",
+    dlicense: params.get("dlicense") ?? "",
+    dminStars: parseNonNegInt(params.get("dmin_stars")),
+    dexcludeArchived: parseExcludeArchived(params.get("dexclude_archived")),
+    dactiveWithin: parseActiveWithin(params.get("dactive_within")),
+    dsort,
+    dpage: parseDiscoverPage(params.get("dpage")),
   };
 }
 
-/** Build a search string starting with `?` (empty → `?` with no params omitted). */
+/** Build a search string starting with `?`. Discover `d*` only when board=discover (drop on leave). */
 export function buildSearch(state: UrlState): string {
   const params = new URLSearchParams();
   params.set("board", state.board);
@@ -135,6 +209,23 @@ export function buildSearch(state: UrlState): string {
   if (state.activeWithin != null && state.activeWithin > 0) {
     params.set("active_within", String(state.activeWithin));
   }
+
+  // Discover namespace: only when on discover tab (spec: drop d* when leaving).
+  if (state.board === "discover") {
+    if (state.dq.trim()) params.set("dq", state.dq.trim());
+    if (state.dlanguage.trim()) params.set("dlanguage", state.dlanguage.trim());
+    if (state.dlicense.trim()) params.set("dlicense", state.dlicense.trim());
+    if (state.dminStars != null && state.dminStars >= 0) {
+      params.set("dmin_stars", String(state.dminStars));
+    }
+    if (!state.dexcludeArchived) params.set("dexclude_archived", "0");
+    if (state.dactiveWithin != null && state.dactiveWithin > 0) {
+      params.set("dactive_within", String(state.dactiveWithin));
+    }
+    if (state.dsort !== "stars") params.set("dsort", state.dsort);
+    if (state.dpage > 1) params.set("dpage", String(state.dpage));
+  }
+
   const s = params.toString();
   return s ? `?${s}` : "?";
 }

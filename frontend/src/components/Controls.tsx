@@ -100,6 +100,7 @@ export default function Controls({
               ["trending", "趋势榜"],
               ["top", "总榜"],
               ["tracked", "我的跟踪"],
+              ["discover", "发现"],
             ] as const
           ).map(([b, label]) => (
             <button
@@ -129,7 +130,7 @@ export default function Controls({
           </div>
         )}
 
-        {board !== "tracked" && (
+        {board !== "tracked" && board !== "discover" && (
           <select
             className="field-select"
             value={date}
@@ -145,44 +146,8 @@ export default function Controls({
             ))}
           </select>
         )}
-      </div>
 
-      <div className="controls-row">
-        <div className="search-wrap">
-          <span className="search-icon" aria-hidden="true">
-            ⌕
-          </span>
-          <input
-            className="field-input"
-            type="search"
-            value={qDraft}
-            onChange={(e) => setQDraft(e.target.value)}
-            placeholder="关键词：名字 / 描述 / 标签…"
-            autoComplete="off"
-            spellCheck={false}
-            aria-label="关键词"
-          />
-        </div>
-
-        <div className="topic-mode" role="group" aria-label="标签匹配模式">
-          <button
-            type="button"
-            className={topicMode === "and" ? "active" : undefined}
-            onClick={() => onTopicMode("and")}
-            title="必须同时包含所选标签"
-          >
-            AND
-          </button>
-          <button
-            type="button"
-            className={topicMode === "or" ? "active" : undefined}
-            onClick={() => onTopicMode("or")}
-            title="包含任一所选标签"
-          >
-            OR
-          </button>
-        </div>
-
+        {/* Density / desc toggles stay available on all boards including discover. */}
         <label
           className="toggle-chip"
           title="紧凑模式减少行高，介绍保留一行"
@@ -204,163 +169,205 @@ export default function Controls({
           />
           显示介绍
         </label>
-
-        <label
-          className="toggle-chip"
-          title="默认排除已归档仓库；取消勾选可显示 archived"
-        >
-          <input
-            type="checkbox"
-            checked={excludeArchived}
-            onChange={(e) => onExcludeArchived(e.target.checked)}
-          />
-          排除已归档
-        </label>
-        <label
-          className="toggle-chip"
-          title={`仅显示最近 ${ACTIVE_WITHIN_DAYS} 天内有 push 且未归档的仓库`}
-        >
-          <input
-            type="checkbox"
-            checked={activeWithin === ACTIVE_WITHIN_DAYS}
-            onChange={(e) =>
-              onActiveWithin(e.target.checked ? ACTIVE_WITHIN_DAYS : null)
-            }
-          />
-          仅活跃({ACTIVE_WITHIN_DAYS}天)
-        </label>
-
-        <button
-          type="button"
-          className="clear-filters"
-          onClick={onClearFilters}
-          disabled={!hasFilters}
-        >
-          清除筛选
-        </button>
       </div>
 
-      <div
-        className={`facet-row${langFacetsOpen ? " is-expanded" : ""}`}
-      >
-        <span className="facet-label">语言</span>
-        <div className="facet-chips-wrap">
-          <div className="chips" aria-label="语言多选（仓库含该语言即匹配）">
-            {languageFacets.length === 0 ? (
-              <span className="facet-empty">—</span>
-            ) : (
-              languageFacets.map(({ language, count }) => {
-                const active = languages.includes(language);
-                return (
-                  <button
-                    key={language}
-                    type="button"
-                    className={`chip${active ? " active" : ""}`}
-                    onClick={() => onToggleLanguage(language)}
-                  >
-                    <span
-                      className="lang-dot"
-                      style={{
-                        background: langColor(language),
-                        width: 7,
-                        height: 7,
-                      }}
-                    />
-                    {language}
-                    <span className="count">{count}</span>
-                  </button>
-                );
-              })
+      {/* Board-local filters: hidden on discover (DiscoverPanel owns its controls). */}
+      {board !== "discover" && (
+        <>
+          <div className="controls-row">
+            <div className="search-wrap">
+              <span className="search-icon" aria-hidden="true">
+                ⌕
+              </span>
+              <input
+                className="field-input"
+                type="search"
+                value={qDraft}
+                onChange={(e) => setQDraft(e.target.value)}
+                placeholder="关键词：名字 / 描述 / 标签…"
+                autoComplete="off"
+                spellCheck={false}
+                aria-label="关键词"
+              />
+            </div>
+
+            <div className="topic-mode" role="group" aria-label="标签匹配模式">
+              <button
+                type="button"
+                className={topicMode === "and" ? "active" : undefined}
+                onClick={() => onTopicMode("and")}
+                title="必须同时包含所选标签"
+              >
+                AND
+              </button>
+              <button
+                type="button"
+                className={topicMode === "or" ? "active" : undefined}
+                onClick={() => onTopicMode("or")}
+                title="包含任一所选标签"
+              >
+                OR
+              </button>
+            </div>
+
+            <label
+              className="toggle-chip"
+              title="默认排除已归档仓库；取消勾选可显示 archived"
+            >
+              <input
+                type="checkbox"
+                checked={excludeArchived}
+                onChange={(e) => onExcludeArchived(e.target.checked)}
+              />
+              排除已归档
+            </label>
+            <label
+              className="toggle-chip"
+              title={`仅显示最近 ${ACTIVE_WITHIN_DAYS} 天内有 push 且未归档的仓库`}
+            >
+              <input
+                type="checkbox"
+                checked={activeWithin === ACTIVE_WITHIN_DAYS}
+                onChange={(e) =>
+                  onActiveWithin(e.target.checked ? ACTIVE_WITHIN_DAYS : null)
+                }
+              />
+              仅活跃({ACTIVE_WITHIN_DAYS}天)
+            </label>
+
+            <button
+              type="button"
+              className="clear-filters"
+              onClick={onClearFilters}
+              disabled={!hasFilters}
+            >
+              清除筛选
+            </button>
+          </div>
+
+          <div
+            className={`facet-row${langFacetsOpen ? " is-expanded" : ""}`}
+          >
+            <span className="facet-label">语言</span>
+            <div className="facet-chips-wrap">
+              <div className="chips" aria-label="语言多选（仓库含该语言即匹配）">
+                {languageFacets.length === 0 ? (
+                  <span className="facet-empty">—</span>
+                ) : (
+                  languageFacets.map(({ language, count }) => {
+                    const active = languages.includes(language);
+                    return (
+                      <button
+                        key={language}
+                        type="button"
+                        className={`chip${active ? " active" : ""}`}
+                        onClick={() => onToggleLanguage(language)}
+                      >
+                        <span
+                          className="lang-dot"
+                          style={{
+                            background: langColor(language),
+                            width: 7,
+                            height: 7,
+                          }}
+                        />
+                        {language}
+                        <span className="count">{count}</span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+            {languageFacets.length > 0 && (
+              <button
+                type="button"
+                className="facet-toggle"
+                onClick={() => setLangFacetsOpen((v) => !v)}
+                aria-expanded={langFacetsOpen}
+              >
+                {langFacetsOpen ? "收起" : "展开"}
+              </button>
             )}
           </div>
-        </div>
-        {languageFacets.length > 0 && (
-          <button
-            type="button"
-            className="facet-toggle"
-            onClick={() => setLangFacetsOpen((v) => !v)}
-            aria-expanded={langFacetsOpen}
-          >
-            {langFacetsOpen ? "收起" : "展开"}
-          </button>
-        )}
-      </div>
 
-      <div
-        className={`facet-row${topicFacetsOpen ? " is-expanded" : ""}`}
-      >
-        <span className="facet-label">标签</span>
-        <div className="facet-chips-wrap">
-          <div className="chips" aria-label="可选标签">
-            {topicFacets.length === 0 ? (
-              <span className="facet-empty">—</span>
-            ) : (
-              topicFacets.map(({ topic, count }) => {
-                const active = topics.includes(topic);
-                return (
-                  <button
-                    key={topic}
-                    type="button"
-                    className={`chip${active ? " active" : ""}`}
-                    onClick={() => onToggleTopic(topic)}
-                  >
-                    {topic}
-                    <span className="count">{count}</span>
-                  </button>
-                );
-              })
+          <div
+            className={`facet-row${topicFacetsOpen ? " is-expanded" : ""}`}
+          >
+            <span className="facet-label">标签</span>
+            <div className="facet-chips-wrap">
+              <div className="chips" aria-label="可选标签">
+                {topicFacets.length === 0 ? (
+                  <span className="facet-empty">—</span>
+                ) : (
+                  topicFacets.map(({ topic, count }) => {
+                    const active = topics.includes(topic);
+                    return (
+                      <button
+                        key={topic}
+                        type="button"
+                        className={`chip${active ? " active" : ""}`}
+                        onClick={() => onToggleTopic(topic)}
+                      >
+                        {topic}
+                        <span className="count">{count}</span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+            {topicFacets.length > 0 && (
+              <button
+                type="button"
+                className="facet-toggle"
+                onClick={() => setTopicFacetsOpen((v) => !v)}
+                aria-expanded={topicFacetsOpen}
+              >
+                {topicFacetsOpen ? "收起" : "展开"}
+              </button>
             )}
           </div>
-        </div>
-        {topicFacets.length > 0 && (
-          <button
-            type="button"
-            className="facet-toggle"
-            onClick={() => setTopicFacetsOpen((v) => !v)}
-            aria-expanded={topicFacetsOpen}
-          >
-            {topicFacetsOpen ? "收起" : "展开"}
-          </button>
-        )}
-      </div>
 
-      <div
-        className={`facet-row${licenseFacetsOpen ? " is-expanded" : ""}`}
-      >
-        <span className="facet-label">许可</span>
-        <div className="facet-chips-wrap">
-          <div className="chips" aria-label="License 多选（OR）">
-            {licenseFacets.length === 0 ? (
-              <span className="facet-empty">—</span>
-            ) : (
-              licenseFacets.map(({ license, count }) => {
-                const active = licenses.includes(license);
-                return (
-                  <button
-                    key={license}
-                    type="button"
-                    className={`chip${active ? " active" : ""}`}
-                    onClick={() => onToggleLicense(license)}
-                  >
-                    {license}
-                    <span className="count">{count}</span>
-                  </button>
-                );
-              })
+          <div
+            className={`facet-row${licenseFacetsOpen ? " is-expanded" : ""}`}
+          >
+            <span className="facet-label">许可</span>
+            <div className="facet-chips-wrap">
+              <div className="chips" aria-label="License 多选（OR）">
+                {licenseFacets.length === 0 ? (
+                  <span className="facet-empty">—</span>
+                ) : (
+                  licenseFacets.map(({ license, count }) => {
+                    const active = licenses.includes(license);
+                    return (
+                      <button
+                        key={license}
+                        type="button"
+                        className={`chip${active ? " active" : ""}`}
+                        onClick={() => onToggleLicense(license)}
+                      >
+                        {license}
+                        <span className="count">{count}</span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+            {licenseFacets.length > 0 && (
+              <button
+                type="button"
+                className="facet-toggle"
+                onClick={() => setLicenseFacetsOpen((v) => !v)}
+                aria-expanded={licenseFacetsOpen}
+              >
+                {licenseFacetsOpen ? "收起" : "展开"}
+              </button>
             )}
           </div>
-        </div>
-        {licenseFacets.length > 0 && (
-          <button
-            type="button"
-            className="facet-toggle"
-            onClick={() => setLicenseFacetsOpen((v) => !v)}
-            aria-expanded={licenseFacetsOpen}
-          >
-            {licenseFacetsOpen ? "收起" : "展开"}
-          </button>
-        )}
-      </div>
+        </>
+      )}
     </section>
   );
 }

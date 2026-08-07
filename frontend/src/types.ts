@@ -69,6 +69,37 @@ export interface MeResponse {
   user_id: number;
   username: string;
   is_admin: boolean;
+  /** Whether the user has saved a personal GitHub PAT (never returns the token). */
+  has_github_token?: boolean;
+}
+
+/** Token path used for a discover search. */
+export type DiscoverAuthMode = "user" | "shared";
+
+export interface DiscoverItem extends RepoHealthFields {
+  full_name: string;
+  html_url: string;
+  description: string | null;
+  language: string | null;
+  license: string | null;
+  stars: number;
+  forks: number;
+  topics: string[];
+  already_tracked: boolean;
+  in_local_index: boolean;
+}
+
+export interface DiscoverSearchResponse {
+  items: DiscoverItem[];
+  page: number;
+  per_page: number;
+  total_count: number;
+  incomplete_results: boolean;
+  auth_mode: DiscoverAuthMode;
+}
+
+export interface GithubTokenStatus {
+  has_github_token: boolean;
 }
 
 export interface LanguageOption {

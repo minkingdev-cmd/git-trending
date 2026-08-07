@@ -8,7 +8,12 @@ import type { MeResponse } from "./types";
 type AuthState =
   | { kind: "loading" }
   | { kind: "anon" }
-  | { kind: "user"; username: string; isAdmin: boolean };
+  | {
+      kind: "user";
+      username: string;
+      isAdmin: boolean;
+      hasGithubToken: boolean;
+    };
 
 type View = "board" | "admin";
 
@@ -28,6 +33,7 @@ export default function App() {
           kind: "user",
           username: me.username,
           isAdmin: !!me.is_admin,
+          hasGithubToken: !!me.has_github_token,
         }),
       )
       .catch(() => setAuth({ kind: "anon" }));
@@ -58,9 +64,15 @@ export default function App() {
               kind: "user",
               username: me.username || username,
               isAdmin: !!me.is_admin,
+              hasGithubToken: !!me.has_github_token,
             });
           } catch {
-            setAuth({ kind: "user", username, isAdmin: false });
+            setAuth({
+              kind: "user",
+              username,
+              isAdmin: false,
+              hasGithubToken: false,
+            });
           }
           setView("board");
         }}
@@ -81,6 +93,12 @@ export default function App() {
     <Leaderboard
       username={auth.username}
       isAdmin={auth.isAdmin}
+      hasGithubToken={auth.hasGithubToken}
+      onHasGithubTokenChange={(has) =>
+        setAuth((prev) =>
+          prev.kind === "user" ? { ...prev, hasGithubToken: has } : prev,
+        )
+      }
       onOpenAdmin={() => setView("admin")}
       onUnauthorized={forceLogout}
       onLogout={async () => {

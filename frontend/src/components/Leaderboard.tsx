@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AddRepoModal from "./AddRepoModal";
 import Controls from "./Controls";
+import DiscoverPanel from "./DiscoverPanel";
+import GithubTokenModal from "./GithubTokenModal";
 import LeaderboardTable from "./LeaderboardTable";
 import RepoHistoryPanel from "./RepoHistoryPanel";
 import TrackedPanel from "./TrackedPanel";
@@ -36,6 +38,7 @@ import {
   parseSearch,
   toggleInList,
   type BoardKind,
+  type DiscoverSort,
   type Metric,
   type TopicMode,
   type UrlState,
@@ -44,6 +47,8 @@ import {
 interface Props {
   username: string;
   isAdmin: boolean;
+  hasGithubToken: boolean;
+  onHasGithubTokenChange: (has: boolean) => void;
   onLogout: () => void;
   onOpenAdmin?: () => void;
   onUnauthorized?: () => void;
@@ -98,6 +103,8 @@ function aggregateFacetsFromItems(
 export default function Leaderboard({
   username,
   isAdmin,
+  hasGithubToken,
+  onHasGithubTokenChange,
   onLogout,
   onOpenAdmin,
   onUnauthorized,
@@ -115,6 +122,20 @@ export default function Leaderboard({
   const [activeWithin, setActiveWithin] = useState<number | null>(
     initial.activeWithin,
   );
+  // Discover namespace
+  const [dq, setDq] = useState(initial.dq);
+  const [dlanguage, setDlanguage] = useState(initial.dlanguage);
+  const [dlicense, setDlicense] = useState(initial.dlicense);
+  const [dminStars, setDminStars] = useState<number | null>(initial.dminStars);
+  const [dexcludeArchived, setDexcludeArchived] = useState(
+    initial.dexcludeArchived,
+  );
+  const [dactiveWithin, setDactiveWithin] = useState<number | null>(
+    initial.dactiveWithin,
+  );
+  const [dsort, setDsort] = useState<DiscoverSort>(initial.dsort);
+  const [dpage, setDpage] = useState(initial.dpage);
+
   const [dates, setDates] = useState<string[]>([]);
   const [data, setData] = useState<LeaderboardResponse | null>(null);
   const [trackedItems, setTrackedItems] = useState<TrackedRepoItem[]>([]);
@@ -125,6 +146,7 @@ export default function Leaderboard({
   const [density, setDensity] = useState<Density>(() => readDensity());
   const [showDesc, setShowDesc] = useState(() => readShowDesc());
   const [addOpen, setAddOpen] = useState(false);
+  const [tokenOpen, setTokenOpen] = useState(false);
   const [untracking, setUntracking] = useState<string | null>(null);
   const [untrackError, setUntrackError] = useState<string | null>(null);
 
@@ -138,7 +160,7 @@ export default function Leaderboard({
     writeShowDesc(showDesc);
   }, [density, showDesc]);
 
-  // Sync filter state → URL (shareable).
+  // Sync filter state → URL (shareable). d* only when board=discover (buildSearch).
   useEffect(() => {
     const state: UrlState = {
       board,
@@ -151,6 +173,14 @@ export default function Leaderboard({
       licenses,
       excludeArchived,
       activeWithin,
+      dq,
+      dlanguage,
+      dlicense,
+      dminStars,
+      dexcludeArchived,
+      dactiveWithin,
+      dsort,
+      dpage,
     };
     window.history.replaceState(null, "", buildSearch(state));
   }, [
@@ -164,6 +194,14 @@ export default function Leaderboard({
     licenses,
     excludeArchived,
     activeWithin,
+    dq,
+    dlanguage,
+    dlicense,
+    dminStars,
+    dexcludeArchived,
+    dactiveWithin,
+    dsort,
+    dpage,
   ]);
 
   useEffect(() => {
@@ -175,6 +213,14 @@ export default function Leaderboard({
   }, [onUnauthorized]);
 
   const load = useCallback(async () => {
+    // Discover fetches via DiscoverPanel; skip board loaders.
+    if (board === "discover") {
+      setLoading(false);
+      setError(null);
+      setData(null);
+      setTrackedItems([]);
+      return;
+    }
     setLoading(true);
     setError(null);
     setUntrackError(null);
@@ -236,6 +282,13 @@ export default function Leaderboard({
   }, [load]);
 
   const { topicFacets, languageFacets, licenseFacets } = useMemo(() => {
+    if (board === "discover") {
+      return {
+        topicFacets: [] as TopicFacet[],
+        languageFacets: [] as LanguageFacet[],
+        licenseFacets: [] as LicenseFacet[],
+      };
+    }
     if (board === "tracked") {
       const agg = aggregateFacetsFromItems(trackedItems);
       return {
@@ -285,6 +338,33 @@ export default function Leaderboard({
     setLicenses([]);
   }, []);
 
+  const onDiscoverFiltersChange = useCallback(
+    (patch: Partial<{
+      dq: string;
+      dlanguage: string;
+      dlicense: string;
+      dminStars: number | null;
+      dexcludeArchived: boolean;
+      dactiveWithin: number | null;
+      dsort: DiscoverSort;
+      dpage: number;
+    }>) => {
+      if (patch.dq !== undefined) setDq(patch.dq);
+      if (patch.dlanguage !== undefined) setDlanguage(patch.dlanguage);
+      if (patch.dlicense !== undefined) setDlicense(patch.dlicense);
+      if (patch.dminStars !== undefined) setDminStars(patch.dminStars);
+      if (patch.dexcludeArchived !== undefined) {
+        setDexcludeArchived(patch.dexcludeArchived);
+      }
+      if (patch.dactiveWithin !== undefined) {
+        setDactiveWithin(patch.dactiveWithin);
+      }
+      if (patch.dsort !== undefined) setDsort(patch.dsort);
+      if (patch.dpage !== undefined) setDpage(patch.dpage);
+    },
+    [],
+  );
+
   const onUntrack = useCallback(
     async (fullName: string) => {
       setUntracking(fullName);
@@ -293,7 +373,7 @@ export default function Leaderboard({
         await untrackRepo(fullName);
         setTrackedItems((cur) => cur.filter((r) => r.full_name !== fullName));
         // If currently viewing a public board, refresh so tracked_by_me badge updates.
-        if (board !== "tracked") {
+        if (board !== "tracked" && board !== "discover") {
           void load();
         }
       } catch (e) {
@@ -312,6 +392,7 @@ export default function Leaderboard({
 
   const onTracked = useCallback(
     (item: TrackedRepoItem) => {
+      // From AddRepo modal: jump to tracked board.
       setBoard("tracked");
       setTrackedItems((cur) => {
         const without = cur.filter(
@@ -319,8 +400,6 @@ export default function Leaderboard({
         );
         return [item, ...without];
       });
-      // Reload list after track so status/meta match server (filters applied).
-      // Board state update triggers load via effect; force a tick if already on tracked.
       if (board === "tracked") {
         void load();
       }
@@ -328,7 +407,18 @@ export default function Leaderboard({
     [board, load],
   );
 
+  /** Track from discover: stay on discover; update tracked cache if needed. */
+  const onDiscoverTracked = useCallback((item: TrackedRepoItem) => {
+    setTrackedItems((cur) => {
+      const without = cur.filter(
+        (r) => r.full_name.toLowerCase() !== item.full_name.toLowerCase(),
+      );
+      return [item, ...without];
+    });
+  }, []);
+
   const resultHint = useMemo(() => {
+    if (board === "discover") return null;
     const n = board === "tracked" ? trackedItems.length : (data?.items.length ?? 0);
     if (board !== "tracked" && !data) return null;
     const boardHint =
@@ -345,7 +435,7 @@ export default function Leaderboard({
     return parts.join(" · ");
   }, [data, board, metric, languages, licenses, topics, topicMode, q, trackedItems]);
 
-  const showPublicTable = board !== "tracked";
+  const showPublicTable = board !== "tracked" && board !== "discover";
 
   return (
     <div className="page">
@@ -371,6 +461,14 @@ export default function Leaderboard({
           >
             ＋ 添加仓库
           </button>
+          <button
+            type="button"
+            className="header-link"
+            title="配置个人 GitHub Token（发现搜索配额）"
+            onClick={() => setTokenOpen(true)}
+          >
+            {hasGithubToken ? "Token ✓" : "Token"}
+          </button>
           <div className="theme-toggle" role="group" aria-label="主题">
             <button
               type="button"
@@ -389,7 +487,9 @@ export default function Leaderboard({
               ☾ Dark
             </button>
           </div>
-          {data?.date && board !== "tracked" && <span>数据截至 {data.date}</span>}
+          {data?.date && board !== "tracked" && board !== "discover" && (
+            <span>数据截至 {data.date}</span>
+          )}
           <span>{username}</span>
           {isAdmin && onOpenAdmin && (
             <button type="button" onClick={onOpenAdmin} className="header-link">
@@ -435,7 +535,28 @@ export default function Leaderboard({
           onShowDesc={setShowDesc}
         />
 
-        {(data || board === "tracked") && (
+        {board === "discover" && (
+          <DiscoverPanel
+            filters={{
+              dq,
+              dlanguage,
+              dlicense,
+              dminStars,
+              dexcludeArchived,
+              dactiveWithin,
+              dsort,
+              dpage,
+            }}
+            onFiltersChange={onDiscoverFiltersChange}
+            hasGithubToken={hasGithubToken}
+            onOpenTokenModal={() => setTokenOpen(true)}
+            onTracked={onDiscoverTracked}
+            onUnauthorized={onUnauthorized}
+            showDesc={showDesc}
+          />
+        )}
+
+        {board !== "discover" && (data || board === "tracked") && (
           <div className="result-meta">
             <div className="active-filters">
               {q.trim() && <span className="pill-q">q: {q.trim()}</span>}
@@ -540,7 +661,7 @@ export default function Leaderboard({
         )}
       </div>
 
-      {historyRepo && (
+      {historyRepo && board !== "discover" && (
         <RepoHistoryPanel
           fullName={historyRepo}
           board={board}
@@ -554,6 +675,14 @@ export default function Leaderboard({
         open={addOpen}
         onClose={() => setAddOpen(false)}
         onTracked={onTracked}
+        onUnauthorized={onUnauthorized}
+      />
+
+      <GithubTokenModal
+        open={tokenOpen}
+        hasGithubToken={hasGithubToken}
+        onClose={() => setTokenOpen(false)}
+        onChanged={onHasGithubTokenChange}
         onUnauthorized={onUnauthorized}
       />
     </div>

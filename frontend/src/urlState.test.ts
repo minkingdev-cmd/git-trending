@@ -3,6 +3,7 @@ import {
   buildSearch,
   DEFAULT_URL_STATE,
   hasActiveFilters,
+  hasDiscoverCondition,
   parseCsvList,
   parseSearch,
   toggleInList,
@@ -39,6 +40,14 @@ describe("parseSearch", () => {
     expect(s.languages).toEqual([]);
     expect(s.excludeArchived).toBe(true);
     expect(s.activeWithin).toBeNull();
+    expect(s.dq).toBe("");
+    expect(s.dlanguage).toBe("");
+    expect(s.dlicense).toBe("");
+    expect(s.dminStars).toBeNull();
+    expect(s.dexcludeArchived).toBe(true);
+    expect(s.dactiveWithin).toBeNull();
+    expect(s.dsort).toBe("stars");
+    expect(s.dpage).toBe(1);
   });
 
   it("parses board top + metric + date + q + languages", () => {
@@ -56,6 +65,11 @@ describe("parseSearch", () => {
     const s = parseSearch("?board=tracked&q=cli");
     expect(s.board).toBe("tracked");
     expect(s.q).toBe("cli");
+  });
+
+  it("parses board=discover", () => {
+    const s = parseSearch("?board=discover");
+    expect(s.board).toBe("discover");
   });
 
   it("maps legacy lang to languages when languages absent", () => {
@@ -99,6 +113,31 @@ describe("parseSearch", () => {
     expect(parseSearch("?active_within=-5").activeWithin).toBeNull();
     expect(parseSearch("?active_within=abc").activeWithin).toBeNull();
   });
+
+  it("parses discover d* params", () => {
+    const s = parseSearch(
+      "?board=discover&dq=http&dlanguage=Rust&dlicense=mit&dmin_stars=100&dexclude_archived=0&dactive_within=90&dsort=updated&dpage=2",
+    );
+    expect(s.board).toBe("discover");
+    expect(s.dq).toBe("http");
+    expect(s.dlanguage).toBe("Rust");
+    expect(s.dlicense).toBe("mit");
+    expect(s.dminStars).toBe(100);
+    expect(s.dexcludeArchived).toBe(false);
+    expect(s.dactiveWithin).toBe(90);
+    expect(s.dsort).toBe("updated");
+    expect(s.dpage).toBe(2);
+  });
+
+  it("clamps dpage to 1..=10", () => {
+    expect(parseSearch("?dpage=0").dpage).toBe(1);
+    expect(parseSearch("?dpage=11").dpage).toBe(10);
+    expect(parseSearch("?dpage=abc").dpage).toBe(1);
+  });
+
+  it("defaults dsort to stars for unknown values", () => {
+    expect(parseSearch("?dsort=forks").dsort).toBe("stars");
+  });
 });
 
 describe("buildSearch", () => {
@@ -114,12 +153,21 @@ describe("buildSearch", () => {
       licenses: [],
       excludeArchived: true,
       activeWithin: null,
+      dq: "",
+      dlanguage: "",
+      dlicense: "",
+      dminStars: null,
+      dexcludeArchived: true,
+      dactiveWithin: null,
+      dsort: "stars",
+      dpage: 1,
     };
     expect(buildSearch(state)).toBe("?board=trending");
   });
 
   it("writes q, topics, topic_mode, languages, licenses", () => {
     const s = buildSearch({
+      ...DEFAULT_URL_STATE,
       board: "top",
       metric: "watchers",
       date: "2026-08-07",
@@ -174,12 +222,21 @@ describe("buildSearch", () => {
       licenses: ["MIT"],
       excludeArchived: true,
       activeWithin: null,
+      dq: "",
+      dlanguage: "",
+      dlicense: "",
+      dminStars: null,
+      dexcludeArchived: true,
+      dactiveWithin: null,
+      dsort: "stars",
+      dpage: 1,
     };
     expect(parseSearch(buildSearch(original))).toEqual(original);
   });
 
   it("round-trips board=tracked with health filters", () => {
     const original: UrlState = {
+      ...DEFAULT_URL_STATE,
       board: "tracked",
       metric: "stars",
       date: "",
@@ -191,6 +248,83 @@ describe("buildSearch", () => {
       excludeArchived: false,
       activeWithin: 90,
     };
+    expect(parseSearch(buildSearch(original))).toEqual(original);
+  });
+
+  it("writes discover d* params only when board=discover", () => {
+    const discover: UrlState = {
+      ...DEFAULT_URL_STATE,
+      board: "discover",
+      dq: "http",
+      dlanguage: "Rust",
+      dlicense: "mit",
+      dminStars: 50,
+      dexcludeArchived: false,
+      dactiveWithin: 90,
+      dsort: "updated",
+      dpage: 3,
+    };
+    const s = buildSearch(discover);
+    const params = new URLSearchParams(s.slice(1));
+    expect(params.get("board")).toBe("discover");
+    expect(params.get("dq")).toBe("http");
+    expect(params.get("dlanguage")).toBe("Rust");
+    expect(params.get("dlicense")).toBe("mit");
+    expect(params.get("dmin_stars")).toBe("50");
+    expect(params.get("dexclude_archived")).toBe("0");
+    expect(params.get("dactive_within")).toBe("90");
+    expect(params.get("dsort")).toBe("updated");
+    expect(params.get("dpage")).toBe("3");
+  });
+
+  it("drops d* when leaving discover", () => {
+    const leaving: UrlState = {
+      ...DEFAULT_URL_STATE,
+      board: "trending",
+      dq: "http",
+      dlanguage: "Rust",
+      dminStars: 10,
+      dpage: 2,
+      dsort: "updated",
+    };
+    const s = buildSearch(leaving);
+    const params = new URLSearchParams(s.slice(1));
+    expect(params.get("board")).toBe("trending");
+    expect(params.get("dq")).toBeNull();
+    expect(params.get("dlanguage")).toBeNull();
+    expect(params.get("dmin_stars")).toBeNull();
+    expect(params.get("dpage")).toBeNull();
+    expect(params.get("dsort")).toBeNull();
+  });
+
+  it("omits default discover fields", () => {
+    const s = buildSearch({
+      ...DEFAULT_URL_STATE,
+      board: "discover",
+      dq: "cli",
+    });
+    const params = new URLSearchParams(s.slice(1));
+    expect(params.get("dq")).toBe("cli");
+    expect(params.get("dexclude_archived")).toBeNull();
+    expect(params.get("dsort")).toBeNull();
+    expect(params.get("dpage")).toBeNull();
+  });
+
+  it("round-trips discover state", () => {
+    const original: UrlState = {
+      ...DEFAULT_URL_STATE,
+      board: "discover",
+      dq: "agent",
+      dlanguage: "Go",
+      dlicense: "apache-2.0",
+      dminStars: 0,
+      dexcludeArchived: true,
+      dactiveWithin: 30,
+      dsort: "stars",
+      dpage: 1,
+    };
+    // dpage=1 and dsort=stars and dexcludeArchived=true are omitted on build,
+    // but parse defaults restore them.
     expect(parseSearch(buildSearch(original))).toEqual(original);
   });
 });
@@ -218,6 +352,74 @@ describe("hasActiveFilters", () => {
     ).toBe(true);
     expect(
       hasActiveFilters({ q: "", topics: [], languages: [], licenses: ["MIT"] }),
+    ).toBe(true);
+  });
+});
+
+describe("hasDiscoverCondition", () => {
+  it("requires at least one of q/language/license/min_stars/active_within", () => {
+    expect(
+      hasDiscoverCondition({
+        dq: "",
+        dlanguage: "",
+        dlicense: "",
+        dminStars: null,
+        dactiveWithin: null,
+      }),
+    ).toBe(false);
+    expect(
+      hasDiscoverCondition({
+        dq: "  ",
+        dlanguage: "",
+        dlicense: "",
+        dminStars: null,
+        dactiveWithin: null,
+      }),
+    ).toBe(false);
+    expect(
+      hasDiscoverCondition({
+        dq: "cli",
+        dlanguage: "",
+        dlicense: "",
+        dminStars: null,
+        dactiveWithin: null,
+      }),
+    ).toBe(true);
+    expect(
+      hasDiscoverCondition({
+        dq: "",
+        dlanguage: "Rust",
+        dlicense: "",
+        dminStars: null,
+        dactiveWithin: null,
+      }),
+    ).toBe(true);
+    expect(
+      hasDiscoverCondition({
+        dq: "",
+        dlanguage: "",
+        dlicense: "mit",
+        dminStars: null,
+        dactiveWithin: null,
+      }),
+    ).toBe(true);
+    expect(
+      hasDiscoverCondition({
+        dq: "",
+        dlanguage: "",
+        dlicense: "",
+        dminStars: 0,
+        dactiveWithin: null,
+      }),
+    ).toBe(true);
+    expect(
+      hasDiscoverCondition({
+        dq: "",
+        dlanguage: "",
+        dlicense: "",
+        dminStars: null,
+        dactiveWithin: 90,
+      }),
     ).toBe(true);
   });
 });

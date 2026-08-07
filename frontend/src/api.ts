@@ -1,4 +1,6 @@
 import type {
+  DiscoverSearchResponse,
+  GithubTokenStatus,
   LookupResponse,
   RepoRefBody,
   TrackedListResponse,
@@ -24,6 +26,14 @@ export class ApiError extends Error {
   }
 }
 
+/** Typed fields often present on discover / rate-limit error bodies. */
+export interface ApiErrorBody {
+  error?: string;
+  message?: string;
+  scope?: string;
+  auth_mode?: string;
+  retry_after_secs?: number;
+}
 let refreshInFlight: Promise<boolean> | null = null;
 
 export function tryRefresh(): Promise<boolean> {
@@ -38,20 +48,24 @@ export function tryRefresh(): Promise<boolean> {
   return refreshInFlight;
 }
 
-async function readErrorMessage(res: Response): Promise<string> {
+async function readErrorPayload(
+  res: Response,
+): Promise<{ message: string; body: unknown }> {
   try {
     const text = await res.text();
-    if (!text) return `HTTP ${res.status}`;
+    if (!text) return { message: `HTTP ${res.status}`, body: undefined };
     try {
-      const json = JSON.parse(text) as { error?: string; message?: string };
-      if (typeof json.error === "string" && json.error) return json.error;
-      if (typeof json.message === "string" && json.message) return json.message;
+      const json = JSON.parse(text) as ApiErrorBody;
+      const message =
+        (typeof json.error === "string" && json.error) ||
+        (typeof json.message === "string" && json.message) ||
+        text.slice(0, 200);
+      return { message, body: json };
     } catch {
-      /* not json */
+      return { message: text.slice(0, 200), body: undefined };
     }
-    return text.slice(0, 200);
   } catch {
-    return `HTTP ${res.status}`;
+    return { message: `HTTP ${res.status}`, body: undefined };
   }
 }
 
@@ -78,8 +92,8 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     throw new UnauthorizedError();
   }
   if (!res.ok) {
-    const msg = await readErrorMessage(res);
-    throw new ApiError(res.status, msg);
+    const { message, body } = await readErrorPayload(res);
+    throw new ApiError(res.status, message, body);
   }
   if (res.status === 204) {
     return undefined as T;
@@ -231,6 +245,61 @@ export async function listTrackedRepos(
     `/api/repos/tracked${q ? `?${q}` : ""}`,
   );
   return res.items ?? [];
+}
+
+export interface DiscoverSearchParams {
+  q?: string;
+  language?: string;
+  license?: string;
+  minStars?: number | null;
+  /** Default true on server; pass false to include archived. */
+  excludeArchived?: boolean;
+  activeWithin?: number | null;
+  sort?: "stars" | "updated";
+  page?: number;
+}
+
+/** GET /api/discover/search — proxies GitHub Search (does not write DB). */
+export async function discoverSearch(
+  params: DiscoverSearchParams = {},
+): Promise<DiscoverSearchResponse> {
+  const qs = new URLSearchParams();
+  if (params.q?.trim()) qs.set("q", params.q.trim());
+  if (params.language?.trim()) qs.set("language", params.language.trim());
+  if (params.license?.trim()) qs.set("license", params.license.trim());
+  if (params.minStars != null && params.minStars >= 0) {
+    qs.set("min_stars", String(params.minStars));
+  }
+  appendHealthFilterParams(qs, {
+    excludeArchived: params.excludeArchived,
+    activeWithin: params.activeWithin,
+  });
+  if (params.sort && params.sort !== "stars") {
+    qs.set("sort", params.sort);
+  }
+  if (params.page != null && params.page > 1) {
+    qs.set("page", String(params.page));
+  }
+  const q = qs.toString();
+  return api<DiscoverSearchResponse>(
+    `/api/discover/search${q ? `?${q}` : ""}`,
+  );
+}
+
+/** PUT /api/me/github-token — save encrypted personal PAT (never echoed). */
+export async function putGithubToken(token: string): Promise<GithubTokenStatus> {
+  return api<GithubTokenStatus>("/api/me/github-token", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+}
+
+/** DELETE /api/me/github-token — clear stored PAT. */
+export async function deleteGithubToken(): Promise<GithubTokenStatus> {
+  return api<GithubTokenStatus>("/api/me/github-token", {
+    method: "DELETE",
+  });
 }
 
 export async function postAuth(path: string, body?: unknown): Promise<Response> {

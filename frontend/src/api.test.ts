@@ -4,9 +4,12 @@ import {
   ApiError,
   UnauthorizedError,
   compact,
+  deleteGithubToken,
+  discoverSearch,
   listTrackedRepos,
   lookupRepo,
   parseRepoRef,
+  putGithubToken,
   trackRepo,
   untrackRepo,
 } from "./api";
@@ -210,5 +213,135 @@ describe("track helpers", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(trackRepo({ full_name: "a/b" })).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe("discoverSearch", () => {
+  beforeEach(() => vi.restoreAllMocks());
+  afterEach(() => vi.restoreAllMocks());
+
+  it("builds query string from params", async () => {
+    const payload = {
+      items: [],
+      page: 1,
+      per_page: 30,
+      total_count: 0,
+      incomplete_results: false,
+      auth_mode: "shared",
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(payload), { status: 200 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await discoverSearch({
+      q: "http",
+      language: "Rust",
+      license: "mit",
+      minStars: 100,
+      excludeArchived: false,
+      activeWithin: 90,
+      sort: "updated",
+      page: 2,
+    });
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url.startsWith("/api/discover/search?")).toBe(true);
+    expect(url).toContain("q=http");
+    expect(url).toContain("language=Rust");
+    expect(url).toContain("license=mit");
+    expect(url).toContain("min_stars=100");
+    expect(url).toContain("exclude_archived=0");
+    expect(url).toContain("active_within=90");
+    expect(url).toContain("sort=updated");
+    expect(url).toContain("page=2");
+  });
+
+  it("omits default sort/page and default exclude_archived", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            items: [],
+            page: 1,
+            per_page: 30,
+            total_count: 0,
+            incomplete_results: false,
+            auth_mode: "user",
+          }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await discoverSearch({ q: "cli", sort: "stars", page: 1 });
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toContain("q=cli");
+    expect(url).not.toContain("sort=");
+    expect(url).not.toContain("page=");
+    expect(url).not.toContain("exclude_archived");
+  });
+
+  it("surfaces 429 with body fields on ApiError", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          error: "rate_limited",
+          scope: "global",
+          auth_mode: "shared",
+          retry_after_secs: 12,
+        }),
+        { status: 429 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await discoverSearch({ language: "Go" });
+      expect.fail("should throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ApiError);
+      const err = e as ApiError;
+      expect(err.status).toBe(429);
+      expect(err.message).toBe("rate_limited");
+      expect(err.body).toMatchObject({
+        error: "rate_limited",
+        scope: "global",
+        retry_after_secs: 12,
+      });
+    }
+  });
+});
+
+describe("github token helpers", () => {
+  beforeEach(() => vi.restoreAllMocks());
+  afterEach(() => vi.restoreAllMocks());
+
+  it("putGithubToken PUTs body and returns status", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ has_github_token: true }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const res = await putGithubToken("ghp_test");
+    expect(res.has_github_token).toBe(true);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/me/github-token");
+    expect(fetchMock.mock.calls[0][1]?.method).toBe("PUT");
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.token).toBe("ghp_test");
+  });
+
+  it("deleteGithubToken DELETEs", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ has_github_token: false }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const res = await deleteGithubToken();
+    expect(res.has_github_token).toBe(false);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/me/github-token");
+    expect(fetchMock.mock.calls[0][1]?.method).toBe("DELETE");
   });
 });
