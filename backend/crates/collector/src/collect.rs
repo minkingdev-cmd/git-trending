@@ -371,11 +371,10 @@ impl Collector {
                 }
             };
 
-            if let Err(e) = core_store::upsert_snapshot(
+            if let Err(e) = core_store::upsert_indexed_snapshots(
                 &self.pool,
                 repo_id,
                 today,
-                Board::TrackedDaily,
                 &SnapshotInput {
                     stars: details.stars,
                     forks: details.forks,
@@ -732,20 +731,28 @@ mod tests {
         let collector = test_collector(pool.clone(), server.uri(), Some("t0k3n".into()));
         collector.scan_tracked_repos(today).await;
 
-        let snap = sqlx::query!(
+        // Indexed onto tracked_daily + public metric boards (stars/forks/watchers).
+        let snaps = sqlx::query!(
             r#"SELECT s.stars, s.forks, s.watchers, s.board AS "board!"
                FROM snapshots s
                JOIN repos r ON r.id = s.repo_id
-               WHERE r.full_name = 'tracked/only' AND s.snapshot_date = $1"#,
+               WHERE r.full_name = 'tracked/only' AND s.snapshot_date = $1
+               ORDER BY s.board"#,
             today
         )
-        .fetch_one(&pool)
+        .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(snap.board, "tracked_daily");
-        assert_eq!(snap.stars, 1234);
-        assert_eq!(snap.forks, 56);
-        assert_eq!(snap.watchers, Some(78));
+        let boards: Vec<_> = snaps.iter().map(|s| s.board.as_str()).collect();
+        assert!(boards.contains(&"tracked_daily"));
+        assert!(boards.contains(&"top_stars"));
+        assert!(boards.contains(&"top_forks"));
+        assert!(boards.contains(&"top_watchers"));
+        for s in &snaps {
+            assert_eq!(s.stars, 1234);
+            assert_eq!(s.forks, 56);
+            assert_eq!(s.watchers, Some(78));
+        }
 
         // Meta + languages refreshed.
         let repo = sqlx::query!(
@@ -762,12 +769,12 @@ mod tests {
             vec!["Rust".to_string(), "TS".to_string()]
         );
 
-        // Public boards remain empty — tracked_daily must not pollute top_*.
+        // User-tracked repos are first-class on public metric boards.
         assert_eq!(
             core_store::board_count(&pool, today, Board::TopStars)
                 .await
                 .unwrap(),
-            0
+            1
         );
         assert_eq!(
             core_store::board_count(&pool, today, Board::TrackedDaily)

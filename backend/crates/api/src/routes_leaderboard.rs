@@ -430,7 +430,23 @@ async fn top(
         .await
         .unwrap_or_default();
     match rows {
-        Ok(rows) => Json(ok_resp(board, date, &parsed, rows, &tracked)).into_response(),
+        Ok(rows) => {
+            // Merge caller's tracked repos (same filters) so user-added repos
+            // always participate in ranking/list even if outside top-N crawl.
+            let rows = match merge_with_user_tracked(
+                &state.pool,
+                claims.sub,
+                board,
+                &parsed,
+                rows,
+            )
+            .await
+            {
+                Ok(r) => r,
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            };
+            Json(ok_resp(board, date, &parsed, rows, &tracked)).into_response()
+        }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
@@ -479,9 +495,52 @@ async fn trending(
         .await
         .unwrap_or_default();
     match store::trending(&state.pool, date, filter, 100).await {
-        Ok(rows) => Json(ok_resp(board, date, &parsed, rows, &tracked)).into_response(),
+        Ok(rows) => {
+            let rows = match merge_with_user_tracked(
+                &state.pool,
+                claims.sub,
+                board,
+                &parsed,
+                rows,
+            )
+            .await
+            {
+                Ok(r) => r,
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            };
+            Json(ok_resp(board, date, &parsed, rows, &tracked)).into_response()
+        }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
+}
+
+/// Pull the caller's tracked set through the same filters and merge into board
+/// rows, re-ranking by the board metric.
+async fn merge_with_user_tracked(
+    pool: &sqlx::PgPool,
+    user_id: i64,
+    board: Board,
+    parsed: &ParsedFilters,
+    board_rows: Vec<ght_core::models::LeaderboardRow>,
+) -> Result<Vec<ght_core::models::LeaderboardRow>, sqlx::Error> {
+    let tracked_list = store::list_tracked(pool, user_id, store_filter(parsed)).await?;
+    let tracked_rows: Vec<_> = tracked_list
+        .into_iter()
+        .map(store::tracked_row_to_leaderboard)
+        .collect();
+    let metric = |r: &ght_core::models::LeaderboardRow| -> i64 {
+        match board {
+            Board::TopForks => r.forks as i64,
+            Board::TopWatchers => r.watchers.unwrap_or(0) as i64,
+            Board::TrendingDaily => r.stars_today.unwrap_or(0) as i64,
+            _ => r.stars as i64,
+        }
+    };
+    Ok(store::merge_leaderboard_with_tracked(
+        board_rows,
+        tracked_rows,
+        metric,
+    ))
 }
 
 async fn languages(

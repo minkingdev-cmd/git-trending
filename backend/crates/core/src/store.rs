@@ -107,6 +107,71 @@ pub async fn upsert_snapshot(
     Ok(())
 }
 
+/// Index a (user-added or tracked) repo onto the same metric boards the public
+/// leaderboard reads, plus `tracked_daily` for personal history.
+///
+/// Does **not** write `trending_daily` (no reliable stars_today from REST).
+pub async fn upsert_indexed_snapshots(
+    pool: &PgPool,
+    repo_id: i64,
+    date: NaiveDate,
+    s: &SnapshotInput,
+) -> Result<(), sqlx::Error> {
+    for board in [
+        Board::TrackedDaily,
+        Board::TopStars,
+        Board::TopForks,
+        Board::TopWatchers,
+    ] {
+        upsert_snapshot(pool, repo_id, date, board, s).await?;
+    }
+    Ok(())
+}
+
+/// Merge public-board rows with the caller's tracked repos (already filtered),
+/// prefer board row when both exist, re-sort by `metric_key`, re-rank 1..n.
+pub fn merge_leaderboard_with_tracked(
+    board_rows: Vec<LeaderboardRow>,
+    tracked_rows: Vec<LeaderboardRow>,
+    metric_key: impl Fn(&LeaderboardRow) -> i64,
+) -> Vec<LeaderboardRow> {
+    use std::collections::HashMap;
+    let mut map: HashMap<String, LeaderboardRow> = HashMap::new();
+    for r in board_rows {
+        map.insert(r.full_name.clone(), r);
+    }
+    for r in tracked_rows {
+        map.entry(r.full_name.clone()).or_insert(r);
+    }
+    let mut out: Vec<LeaderboardRow> = map.into_values().collect();
+    out.sort_by(|a, b| {
+        metric_key(b)
+            .cmp(&metric_key(a))
+            .then_with(|| a.full_name.cmp(&b.full_name))
+    });
+    for (i, r) in out.iter_mut().enumerate() {
+        r.rank = (i + 1) as i64;
+    }
+    out
+}
+
+/// Convert a tracked list row into a leaderboard row (rank filled later).
+pub fn tracked_row_to_leaderboard(t: TrackedRow) -> LeaderboardRow {
+    LeaderboardRow {
+        rank: 0,
+        full_name: t.full_name,
+        html_url: t.html_url,
+        description: t.description,
+        language: t.language,
+        topics: t.topics,
+        languages: t.languages,
+        stars: t.stars.unwrap_or(0),
+        forks: t.forks.unwrap_or(0),
+        watchers: t.watchers,
+        stars_today: t.stars_today,
+    }
+}
+
 pub async fn top_by_stars(
     pool: &PgPool,
     date: NaiveDate,

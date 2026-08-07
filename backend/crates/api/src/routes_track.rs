@@ -9,7 +9,7 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
-use ght_core::models::{Board, LanguageShare, LeaderboardFilter, RepoInput, SnapshotInput};
+use ght_core::models::{LanguageShare, LeaderboardFilter, RepoInput, SnapshotInput};
 use ght_core::store::{self, TRACKED_REPO_LIMIT};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -678,12 +678,12 @@ async fn track(
         }
     };
 
-    // Instant snapshot so status leaves pending quickly.
-    if let Err(e) = store::upsert_snapshot(
+    // Index onto public metric boards + tracked_daily so the repo participates
+    // in the same leaderboard ranking / filter lists as crawler-indexed repos.
+    if let Err(e) = store::upsert_indexed_snapshots(
         &state.pool,
         repo_id,
         today,
-        Board::TrackedDaily,
         &SnapshotInput {
             stars: gh.stars,
             forks: gh.forks,
@@ -693,7 +693,7 @@ async fn track(
     )
     .await
     {
-        tracing::warn!(error = %e, "tracked_daily snapshot on track failed");
+        tracing::warn!(error = %e, "indexed snapshots on track failed");
         // non-fatal: tracking still proceeds
     }
 
