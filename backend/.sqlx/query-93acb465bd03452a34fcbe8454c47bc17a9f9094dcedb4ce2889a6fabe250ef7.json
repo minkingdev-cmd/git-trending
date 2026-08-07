@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users\n           SET github_token_ciphertext = NULL,\n               github_token_set_at = NULL\n           WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "93acb465bd03452a34fcbe8454c47bc17a9f9094dcedb4ce2889a6fabe250ef7"
+}

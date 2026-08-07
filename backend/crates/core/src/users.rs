@@ -222,6 +222,65 @@ pub async fn revoke_invite(pool: &PgPool, code: &str) -> Result<bool, sqlx::Erro
     Ok(res.rows_affected() > 0)
 }
 
+/// Store AES-GCM ciphertext for the user's GitHub PAT and stamp `github_token_set_at`.
+pub async fn set_user_github_token(
+    pool: &PgPool,
+    user_id: i64,
+    ciphertext: &[u8],
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"UPDATE users
+           SET github_token_ciphertext = $2,
+               github_token_set_at = now()
+           WHERE id = $1"#,
+        user_id,
+        ciphertext
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Clear stored PAT ciphertext and set timestamp.
+pub async fn clear_user_github_token(pool: &PgPool, user_id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"UPDATE users
+           SET github_token_ciphertext = NULL,
+               github_token_set_at = NULL
+           WHERE id = $1"#,
+        user_id
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Raw ciphertext blob (`nonce || ct || tag`), if set.
+pub async fn get_user_github_token_ciphertext(
+    pool: &PgPool,
+    user_id: i64,
+) -> Result<Option<Vec<u8>>, sqlx::Error> {
+    let rec = sqlx::query!(
+        "SELECT github_token_ciphertext FROM users WHERE id = $1",
+        user_id
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(rec.and_then(|r| r.github_token_ciphertext))
+}
+
+/// Whether the user has a non-null stored PAT ciphertext (does not decrypt).
+pub async fn user_has_github_token(pool: &PgPool, user_id: i64) -> Result<bool, sqlx::Error> {
+    let rec = sqlx::query!(
+        r#"SELECT (github_token_ciphertext IS NOT NULL) AS "has!: bool"
+           FROM users WHERE id = $1"#,
+        user_id
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(rec.map(|r| r.has).unwrap_or(false))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,5 +367,32 @@ mod tests {
         let code = generate_invite_code();
         assert_eq!(code.len(), 24);
         assert!(code.chars().all(|c| c.is_ascii_alphanumeric()));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn github_token_set_get_clear() {
+        let pool = test_pool().await;
+        let uid = create_user(&pool, "tokuser", "hash", None).await.unwrap();
+        assert!(!user_has_github_token(&pool, uid).await.unwrap());
+        assert!(get_user_github_token_ciphertext(&pool, uid)
+            .await
+            .unwrap()
+            .is_none());
+
+        let blob = b"nonce-and-ciphertext-blob".to_vec();
+        set_user_github_token(&pool, uid, &blob).await.unwrap();
+        assert!(user_has_github_token(&pool, uid).await.unwrap());
+        assert_eq!(
+            get_user_github_token_ciphertext(&pool, uid).await.unwrap(),
+            Some(blob)
+        );
+
+        clear_user_github_token(&pool, uid).await.unwrap();
+        assert!(!user_has_github_token(&pool, uid).await.unwrap());
+        assert!(get_user_github_token_ciphertext(&pool, uid)
+            .await
+            .unwrap()
+            .is_none());
     }
 }

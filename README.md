@@ -94,6 +94,7 @@ GitHub Actions（`.github/workflows/ci.yml`）在 push/PR 时运行：
 |------|------|------|
 | `DATABASE_URL` | ✅ | PostgreSQL |
 | `JWT_SECRET` | ✅ | JWT 密钥 |
+| `TOKEN_ENCRYPTION_KEY` | ❌ | 用户 GitHub PAT 加密密钥：64 位 hex 或 32 字节 base64；缺省则 `SHA-256(JWT_SECRET \|\| "ght-github-token-v1")` |
 | `GITHUB_TOKEN` | watch 榜 | 缺失则跳过 watch |
 | `LANGUAGES` | ❌ | 逗号分隔语言 |
 | `COLLECT_TIME` | ❌ | 默认 `09:00` |
